@@ -83,6 +83,34 @@ procedure. Our settings are explicit starting choices and do not claim to reprod
 the published CodeBERT weights or F1. For tuning, draw validation data from `train`
 and reserve the public `test` results for reporting.
 
+To train Ettin-17M alongside the 32M experiment, use a per-command model selection
+after syncing these changes to the HPC. From `hpc/`:
+
+```bash
+HPC_MODEL=ettin-17m ./prepare.sh
+HPC_MODEL=ettin-17m ./submit.sh smoke ettin-17m-smoke-001
+# Once that smoke job completes:
+HPC_MODEL=ettin-17m ./submit.sh train ettin-17m-001
+```
+
+This uses `configs/ettin-17m.json` and `~/nlbse27/prepared/ettin-17m-512`.
+The output is `~/nlbse27/runs/ettin-17m-001`. The environment is shared, so no new
+installation is needed. Keep `hpc/config.sh` as your cluster configuration; the
+model prefix applies only to that command, leaving the default at 32M. Job names
+include the selected model. Slurm decides whether the allocation permits the two
+jobs to run concurrently or queues the second one.
+
+If resuming the 17M run after an interruption, include both selections:
+
+```bash
+HPC_MODEL=ettin-17m RESUME=auto ./submit.sh train ettin-17m-001
+```
+
+The same Colab notebook can evaluate either model. Export the 17M run using the
+guide's commands with `ettin-17m-001`, then change `ARCHIVE`, `WORK_DIR`, and
+`RESULT_DIR` in Colab to the 17M paths. It reads the model type and preprocessing
+from the export rather than assuming a particular Ettin size.
+
 Run checks:
 
 ```bash

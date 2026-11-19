@@ -10,7 +10,7 @@ if [[ "$mode" == evaluate && -z "${2:-}" ]]; then
     echo "Evaluation requires the name of an existing run." >&2
     exit 1
 fi
-run_name="${2:-$mode-$(date -u +%Y%m%dT%H%M%SZ)}"
+run_name="${2:-$HPC_MODEL-$mode-$(date -u +%Y%m%dT%H%M%SZ)}"
 if [[ ! "$run_name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
     echo "Run name must start with a letter/digit and contain only letters, digits, ., _, -." >&2
     exit 1
@@ -55,7 +55,7 @@ fi
 time_limit="$HPC_TIME"
 if [[ "$mode" == smoke ]]; then time_limit="$HPC_SMOKE_TIME"; fi
 mkdir -p "$HPC_WORKDIR/logs"
-options=(--job-name="nlbse-$mode" --nodes=1 --ntasks=1
+options=(--job-name="$HPC_MODEL-$mode" --nodes=1 --ntasks=1
     --partition="$HPC_PARTITION" --gres="$HPC_GRES"
     --cpus-per-task="$HPC_CPUS" --mem="$HPC_MEM" --time="$time_limit"
     --chdir="$REPO_ROOT" --export=ALL

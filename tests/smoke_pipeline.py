@@ -30,6 +30,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--architecture", choices=["modernbert", "roberta"], default="modernbert")
     parser.add_argument("--backbone", type=Path, help="Optional locally downloaded Ettin checkpoint")
+    parser.add_argument("--config", type=Path, help="Optional configuration to exercise")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="nlbse-integration-") as temporary:
         directory = Path(temporary)
@@ -61,7 +62,7 @@ def main():
             model.save_pretrained(backbone)
         codes = ["int f() { /* TODO */ return 0; }", "void g() { return; }"] * 4
         config_path_source = pipeline.DEFAULT_CONFIG if args.architecture == "modernbert" else ROOT / "configs/codebert-baseline.json"
-        config = pipeline.load_config(config_path_source)
+        config = pipeline.load_config(args.config or config_path_source)
         config.update(max_length=16, batch_size=2, eval_batch_size=2, save_steps=1,
                       model_revision="fixture", dataset_revision="fixture")
         config_path = directory / "config.json"

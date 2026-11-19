@@ -1,0 +1,19 @@
+{
+  "model_name": "jhu-clsp/ettin-encoder-17m",
+  "model_revision": "987607455c61e7a5bbc85f7758e0512ea6d0ae4c",
+  "dataset_name": "NLBSE/nlbse27-code-comment-classification",
+  "dataset_revision": "main",
+  "use_fast_tokenizer": true,
+  "max_length": 512,
+  "seed": 42,
+  "epochs": 3,
+  "learning_rate": 2e-05,
+  "weight_decay": 0.01,
+  "warmup_ratio": 0.1,
+  "batch_size": 8,
+  "gradient_accumulation_steps": 2,
+  "eval_batch_size": 16,
+  "precision": "fp32",
+  "save_steps": 500,
+  "save_total_limit": 2
+}

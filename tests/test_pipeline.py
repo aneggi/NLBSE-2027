@@ -22,6 +22,14 @@ class MetricTests(unittest.TestCase):
         self.assertEqual(len(config["model_revision"]), 40)
         self.assertTrue(config["use_fast_tokenizer"])
 
+    def test_17m_uses_matching_training_settings(self):
+        smaller = pipeline.load_config(ROOT / "configs/ettin-17m.json")
+        larger = pipeline.load_config(pipeline.DEFAULT_CONFIG)
+        self.assertEqual(smaller["model_name"], "jhu-clsp/ettin-encoder-17m")
+        self.assertEqual(len(smaller["model_revision"]), 40)
+        for key in larger.keys() - {"model_name", "model_revision"}:
+            self.assertEqual(smaller[key], larger[key], key)
+
     def test_independent_tasks_and_mean_f1(self):
         labels = [[1, 0], [1, 1], [0, 0], [0, 1]]
         predictions = [[1, 1], [0, 1], [0, 0], [1, 1]]
@@ -85,6 +93,7 @@ class SubmissionTests(unittest.TestCase):
         ]) + "\n")
         self.env = dict(os.environ, HPC_CONFIG=str(self.config), DRY_RUN="1")
         self.env.pop("RESUME", None)
+        self.env.pop("HPC_MODEL", None)
 
     def submit(self, *arguments):
         return subprocess.run(["bash", str(ROOT / "hpc/submit.sh"), *arguments],
@@ -98,6 +107,33 @@ class SubmissionTests(unittest.TestCase):
         self.assertIn("--partition=verified-test-partition", command)
         self.assertIn("--account=project123", command)
         self.assertIn(f"--output={self.path}/logs/ettin-%j.out", command)
+
+    def test_17m_selection_is_exported_with_isolated_paths(self):
+        prepared = self.path / "prepared/ettin-17m-512"
+        prepared.mkdir()
+        (prepared / "manifest.json").write_text("{}")
+        binary = self.path / "profile-bin"
+        binary.mkdir()
+        mock = binary / "sbatch"
+        mock.write_text('#!/bin/bash\nprintf "%s\\n" "$HPC_MODEL" "$HPC_TRAIN_CONFIG" "$HPC_PREPARED" "$NLBSE_RUN_DIR" "$@"\n')
+        mock.chmod(0o755)
+        self.env.update(HPC_MODEL="ettin-17m", DRY_RUN="0", PATH=f"{binary}:{self.env['PATH']}")
+        result = self.submit("train", "ettin-17m-001")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[:4], ["ettin-17m", str(ROOT / "configs/ettin-17m.json"),
+                         str(prepared), str(self.path / "runs/ettin-17m-001")])
+        self.assertIn("--job-name=ettin-17m-train", result.stdout)
+        self.env.pop("HPC_MODEL")
+        self.env["DRY_RUN"] = "1"
+        default = self.submit("train", "ettin-32m-002")
+        self.assertEqual(default.returncode, 0, default.stderr)
+        self.assertIn("--job-name=ettin-32m-train", default.stdout)
+
+    def test_unknown_model_profile_is_rejected(self):
+        self.env["HPC_MODEL"] = "../wrong-model"
+        result = self.submit("train", "bad-profile")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unknown HPC_MODEL", result.stderr)
 
     def test_only_partition_and_storage_override_are_needed(self):
         self.config.write_text(f"HPC_WORKDIR={shlex.quote(str(self.path))}\nHPC_PARTITION=verified-test-partition\n")

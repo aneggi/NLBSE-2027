@@ -84,10 +84,11 @@ configuration files continue to work.
 
 | Setting | Default / purpose |
 | --- | --- |
+| `HPC_MODEL` | `ettin-32m`; prefix a command with `HPC_MODEL=ettin-17m` for the other model. |
 | `HPC_PYTHON` | Automatically finds `python3.11`, `python3.12`, or a compatible `python3`; set an executable to override. |
 | `HPC_VENV` | `$HPC_WORKDIR/venv` |
-| `HPC_PREPARED` | `$HPC_WORKDIR/prepared/ettin-32m-512`; change for another model or tokenization. |
-| `HPC_TRAIN_CONFIG` | Repository's `configs/ettin-32m.json` |
+| `HPC_PREPARED` | `$HPC_WORKDIR/prepared/$HPC_MODEL-512`; follows the selected model. |
+| `HPC_TRAIN_CONFIG` | Repository's `configs/$HPC_MODEL.json` |
 | `TORCH_INDEX_URL` | `https://download.pytorch.org/whl/cu124`; change if the allocated GPU driver needs another wheel. |
 | `HPC_QOS` | Empty; set if required by your allocation. |
 | `HPC_GRES` | `gpu:1`; change if the site requires a GPU type in the resource request. |
@@ -451,6 +452,43 @@ The Colab notebook exports task metrics, predictions, and optional local runtime
 and FLOP estimates. Its portable evaluation cells are exercised locally; Google
 Drive authorization and an actual hosted Colab GPU session are later steps.
 For the official ranking, use the organisers' required evaluation environment.
+
+The same notebook also supports Ettin-17M: export its `final_model/` and `run.json`
+from `runs/ettin-17m-001` and use a different archive/work/results path in Colab.
+
+## 11. Run Ettin-17M alongside Ettin-32M
+
+From `hpc/`, select the smaller model on each command:
+
+```bash
+HPC_MODEL=ettin-17m ./prepare.sh
+HPC_MODEL=ettin-17m ./submit.sh smoke ettin-17m-smoke-001
+# After the smoke job succeeds:
+HPC_MODEL=ettin-17m ./submit.sh train ettin-17m-001
+```
+
+The 17M configuration pins `jhu-clsp/ettin-encoder-17m` and otherwise uses the
+same initial hyperparameters as 32M: 512 tokens, three epochs, effective batch
+16, and fp32. Model loading, attention, tokenizer handling, and evaluation use
+the existing ModernBERT path. The new prepared directory contains its own
+pretrained backbone, and the separate run name keeps checkpoints apart.
+
+No setup reinstall or global model switch is needed. The temporary assignment
+is passed to the submitted job and does not alter an already running 32M job.
+Concurrent execution depends on the allocation's GPU/job limits; the second job
+may wait in the queue. Node choice is still controlled by the existing cluster
+settings. Compare model performance and runtime on equivalent hardware.
+
+If your cluster configuration has explicit `HPC_TRAIN_CONFIG` or `HPC_PREPARED`
+overrides, remove those overrides before using model profiles; otherwise they
+take precedence over the automatic model-specific paths. The minimal cluster
+configuration used in this session does not contain them.
+
+To resume the same 17M training run after it has saved checkpoints:
+
+```bash
+HPC_MODEL=ettin-17m RESUME=auto ./submit.sh train ettin-17m-001
+```
 
 To run CodeBERT again for comparison, add these explicit overrides to your
 cluster configuration and use a CodeBERT run name:

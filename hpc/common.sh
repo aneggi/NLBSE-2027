@@ -14,8 +14,13 @@ source "$HPC_CONFIG"
 # Normal runs only need a GPU partition. These can still be overridden in config.sh.
 HPC_WORKDIR="${HPC_WORKDIR:-$HOME/nlbse27}"
 HPC_VENV="${HPC_VENV:-$HPC_WORKDIR/venv}"
-HPC_PREPARED="${HPC_PREPARED:-$HPC_WORKDIR/prepared/ettin-32m-512}"
-HPC_TRAIN_CONFIG="${HPC_TRAIN_CONFIG:-$REPO_ROOT/configs/ettin-32m.json}"
+HPC_MODEL="${HPC_MODEL:-ettin-32m}"
+case "$HPC_MODEL" in
+    ettin-17m|ettin-32m) ;;
+    *) echo "Unknown HPC_MODEL: $HPC_MODEL. Choose ettin-17m or ettin-32m." >&2; exit 1 ;;
+esac
+HPC_PREPARED="${HPC_PREPARED:-$HPC_WORKDIR/prepared/$HPC_MODEL-512}"
+HPC_TRAIN_CONFIG="${HPC_TRAIN_CONFIG:-$REPO_ROOT/configs/$HPC_MODEL.json}"
 HPC_PYTHON="${HPC_PYTHON:-}"
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu124}"
 HPC_ACCOUNT="${HPC_ACCOUNT:-}"
@@ -32,7 +37,7 @@ for path in "$HPC_WORKDIR" "$HPC_VENV" "$HPC_PREPARED" "$HPC_TRAIN_CONFIG"; do
         exit 1
     fi
 done
-export REPO_ROOT HPC_CONFIG HPC_WORKDIR HPC_VENV HPC_PREPARED HPC_TRAIN_CONFIG
+export REPO_ROOT HPC_CONFIG HPC_WORKDIR HPC_VENV HPC_PREPARED HPC_TRAIN_CONFIG HPC_MODEL
 export HF_HOME="$HPC_WORKDIR/cache/huggingface"
 export TOKENIZERS_PARALLELISM=false
 export PYTHONUNBUFFERED=1
