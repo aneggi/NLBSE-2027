@@ -40,9 +40,10 @@ options=(--job-name="nlbse-$mode" --nodes=1 --ntasks=1
     --partition="$HPC_PARTITION" --gres="$HPC_GRES"
     --cpus-per-task="$HPC_CPUS" --mem="$HPC_MEM" --time="$time_limit"
     --chdir="$REPO_ROOT" --export=ALL
-    --output="$HPC_WORKDIR/logs/%x-%j.out" --error="$HPC_WORKDIR/logs/%x-%j.err")
+    --output="$HPC_WORKDIR/logs/ettin-%j.out" --error="$HPC_WORKDIR/logs/ettin-%j.err")
 if [[ -n "${HPC_ACCOUNT:-}" ]]; then options+=(--account="$HPC_ACCOUNT"); fi
 if [[ -n "${HPC_QOS:-}" ]]; then options+=(--qos="$HPC_QOS"); fi
+if [[ -n "$HPC_CONSTRAINT" ]]; then options+=(--constraint="$HPC_CONSTRAINT"); fi
 if [[ "${DRY_RUN:-0}" == 1 ]]; then
     printf 'NLBSE_MODE=%q NLBSE_RUN_DIR=%q NLBSE_RESUME=%q\n' "$NLBSE_MODE" "$NLBSE_RUN_DIR" "$NLBSE_RESUME"
     printf '%q ' sbatch "${options[@]}" "$REPO_ROOT/hpc/job.sh"

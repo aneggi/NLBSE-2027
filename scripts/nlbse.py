@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare, fine-tune, evaluate, and run a two-label CodeBERT model."""
+"""Prepare, fine-tune, evaluate, and run a two-label code classification model."""
 
 import argparse
 import contextlib
@@ -16,6 +16,7 @@ import time
 
 LABELS = ["Vulnerability", "MAT"]
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CONFIG = ROOT / "configs/ettin-32m.json"
 
 
 def read_json(path):
@@ -33,7 +34,9 @@ def load_config(path):
         if type(config[key]) is not int or config[key] < 1:
             raise ValueError(f"{key} must be a positive integer")
     if config["max_length"] > 512:
-        raise ValueError("This CodeBERT pipeline supports at most 512 tokens")
+        raise ValueError("This classification pipeline supports at most 512 tokens")
+    if type(config.get("use_fast_tokenizer", False)) is not bool:
+        raise ValueError("use_fast_tokenizer must be true or false")
     if config["precision"] not in ("fp32", "fp16", "bf16"):
         raise ValueError("precision must be fp32, fp16, or bf16")
     for key in ("epochs", "learning_rate"):
@@ -83,10 +86,33 @@ def provenance():
     }
 
 
+def load_tokenizer(path, use_fast=False):
+    from transformers import AutoTokenizer
+    return AutoTokenizer.from_pretrained(path, use_fast=use_fast, local_files_only=True)
+
+
+def load_classifier(path, for_training=False):
+    from transformers import AutoConfig, AutoModelForSequenceClassification
+    overrides = {}
+    if for_training:
+        overrides = dict(num_labels=2, problem_type="multi_label_classification",
+                         id2label=dict(enumerate(LABELS)),
+                         label2id={name: i for i, name in enumerate(LABELS)})
+    config = AutoConfig.from_pretrained(path, local_files_only=True, **overrides)
+    options = {}
+    if config.model_type == "modernbert":
+        # Portable on HPC and Colab: native PyTorch attention, no compiler or
+        # separately installed flash-attn package required.
+        config.reference_compile = False
+        options["attn_implementation"] = "sdpa"
+    return AutoModelForSequenceClassification.from_pretrained(
+        path, config=config, local_files_only=True, **options,
+    )
+
+
 def prepare(args):
     from datasets import load_dataset
     from huggingface_hub import HfApi, snapshot_download
-    from transformers import AutoTokenizer
 
     config = load_config(args.config)
     destination = args.prepared.resolve()
@@ -101,8 +127,7 @@ def prepare(args):
         snapshot_download(config["model_name"], revision=model_sha, local_dir=staging / "base-model",
                           allow_patterns=["*.json", "vocab.*", "merges.txt", "tokenizer.*",
                                           "*.safetensors", "pytorch_model*.bin"])
-        tokenizer = AutoTokenizer.from_pretrained(staging / "base-model", use_fast=False,
-                                                  local_files_only=True)
+        tokenizer = load_tokenizer(staging / "base-model", config.get("use_fast_tokenizer", False))
         ds = load_dataset(config["dataset_name"], revision=data_sha)
         if "train" not in ds or "test" not in ds:
             raise ValueError("The competition dataset must contain train and test splits")
@@ -121,6 +146,7 @@ def prepare(args):
             "model_name": config["model_name"], "model_revision": model_sha,
             "dataset_name": config["dataset_name"], "dataset_revision": data_sha,
             "max_length": config["max_length"], "labels": LABELS,
+            "use_fast_tokenizer": config.get("use_fast_tokenizer", False),
             "split_sizes": {split: len(ds[split]) for split in ("train", "test")},
             "environment": provenance(),
         })
@@ -151,13 +177,15 @@ def check_prepared(config, prepared):
     for key in ("model_revision", "dataset_revision"):
         if config[key] != "main" and config[key] != manifest[key]:
             raise ValueError(f"Prepared {key} differs from requested revision")
+    if manifest.get("use_fast_tokenizer", False) != config.get("use_fast_tokenizer", False):
+        raise ValueError("Prepared tokenizer differs from config; prepare a new directory")
     return manifest
 
 
 def train(args):
     import torch
     from datasets import load_from_disk
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer, Trainer, TrainingArguments, set_seed
+    from transformers import Trainer, TrainingArguments, set_seed
     from transformers.trainer_utils import get_last_checkpoint
 
     config = load_config(args.config)
@@ -181,12 +209,8 @@ def train(args):
     if (args.output / "final_model").exists():
         raise ValueError("This run already has a final model; evaluate it or choose a new run")
     set_seed(config["seed"])
-    tokenizer = AutoTokenizer.from_pretrained(args.prepared / "base-model", use_fast=False, local_files_only=True)
-    model = AutoModelForSequenceClassification.from_pretrained(
-        args.prepared / "base-model", local_files_only=True, num_labels=2,
-        problem_type="multi_label_classification",
-        id2label=dict(enumerate(LABELS)), label2id={name: i for i, name in enumerate(LABELS)},
-    )
+    tokenizer = load_tokenizer(args.prepared / "base-model", config.get("use_fast_tokenizer", False))
+    model = load_classifier(args.prepared / "base-model", for_training=True)
     dataset = select_samples(load_from_disk(args.prepared / "train"), args.max_train_samples)
     args.output.mkdir(parents=True, exist_ok=True)
     if not args.resume:
@@ -194,6 +218,7 @@ def train(args):
             "config": config, "prepared": manifest, "environment": provenance(),
             "max_steps": args.max_steps, "max_train_samples": args.max_train_samples,
             "train_instances": len(dataset),
+            "parameters": sum(parameter.numel() for parameter in model.parameters()),
             "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
         })
     training_args = TrainingArguments(
@@ -216,6 +241,7 @@ def train(args):
     tokenizer.save_pretrained(final_staging)
     write_json(final_staging / "preprocessing.json", {
         "max_length": config["max_length"], "labels": LABELS, "threshold": 0.5,
+        "use_fast_tokenizer": config.get("use_fast_tokenizer", False),
     })
     trainer.save_state()
     trainer.save_metrics("train", result.metrics)
@@ -227,7 +253,6 @@ def evaluate(args):
     import torch
     from datasets import load_from_disk
     from torch.utils.data import DataLoader
-    from transformers import AutoModelForSequenceClassification
 
     config = load_config(args.config)
     manifest = check_prepared(config, args.prepared)
@@ -239,7 +264,7 @@ def evaluate(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if args.require_cuda and device.type != "cuda":
         raise RuntimeError("CUDA is unavailable")
-    model = AutoModelForSequenceClassification.from_pretrained(args.model, local_files_only=True).to(device).eval()
+    model = load_classifier(args.model).to(device).eval()
     dataset = select_samples(load_from_disk(args.prepared / "test"), args.max_test_samples)
     loader = DataLoader(dataset, batch_size=config["eval_batch_size"], collate_fn=collate)
     labels, predictions, probabilities = [], [], []
@@ -274,6 +299,7 @@ def evaluate(args):
         "gflops_per_pass": total_flops / args.repetitions / 1e9 if args.profile_flops else None,
         "profiling_enabled": args.profile_flops, "eval_batch_size": config["eval_batch_size"],
         "model": str(args.model.resolve()), "prepared": manifest, "environment": provenance(),
+        "parameters": sum(parameter.numel() for parameter in model.parameters()),
         "device": torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu",
     })
     args.output.mkdir(parents=True)
@@ -286,7 +312,6 @@ def evaluate(args):
 
 def predict(args):
     import torch
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
     if args.output.exists():
         raise ValueError("Prediction output already exists")
@@ -294,8 +319,8 @@ def predict(args):
     max_length = args.max_length or preprocessing["max_length"]
     if max_length != preprocessing["max_length"]:
         raise ValueError("max-length differs from the model's saved preprocessing")
-    model = AutoModelForSequenceClassification.from_pretrained(args.model, local_files_only=True).eval()
-    tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=False, local_files_only=True)
+    model = load_classifier(args.model).eval()
+    tokenizer = load_tokenizer(args.model, preprocessing.get("use_fast_tokenizer", False))
     if model.config.num_labels != 2 or [model.config.id2label[i] for i in range(2)] != LABELS:
         raise ValueError("Expected a model saved by this pipeline with [Vulnerability, MAT] outputs")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -338,7 +363,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("prepare", "train", "evaluate"):
         command = commands.add_parser(name)
-        command.add_argument("--config", type=Path, default=ROOT / "configs/codebert-baseline.json")
+        command.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
         command.add_argument("--prepared", type=Path, required=True)
         if name != "prepare":
             command.add_argument("--output", type=Path, required=True)

@@ -16,6 +16,12 @@ spec.loader.exec_module(pipeline)
 
 
 class MetricTests(unittest.TestCase):
+    def test_default_model_is_pinned_ettin_32m(self):
+        config = pipeline.load_config(pipeline.DEFAULT_CONFIG)
+        self.assertEqual(config["model_name"], "jhu-clsp/ettin-encoder-32m")
+        self.assertEqual(len(config["model_revision"]), 40)
+        self.assertTrue(config["use_fast_tokenizer"])
+
     def test_independent_tasks_and_mean_f1(self):
         labels = [[1, 0], [1, 1], [0, 0], [0, 1]]
         predictions = [[1, 1], [0, 1], [0, 0], [1, 1]]
@@ -49,13 +55,23 @@ class MetricTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "max_length"):
                 pipeline.check_prepared(config, Path(directory))
 
+    def test_tokenizer_changes_require_new_preparation(self):
+        config = pipeline.load_config(pipeline.DEFAULT_CONFIG)
+        manifest = {key: config[key] for key in ("model_name", "dataset_name", "max_length",
+                                                "model_revision", "dataset_revision")}
+        manifest["use_fast_tokenizer"] = False
+        with tempfile.TemporaryDirectory() as directory:
+            pipeline.write_json(Path(directory) / "manifest.json", manifest)
+            with self.assertRaisesRegex(ValueError, "tokenizer"):
+                pipeline.check_prepared(config, Path(directory))
+
 
 class SubmissionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="nlbse tests ")
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name)
-        prepared = self.path / "prepared/codebert-512"
+        prepared = self.path / "prepared/ettin-32m-512"
         prepared.mkdir(parents=True)
         (prepared / "manifest.json").write_text("{}")
         venv = self.path / "venv/bin"
@@ -81,16 +97,39 @@ class SubmissionTests(unittest.TestCase):
         self.assertIn("--time=00:20:00", command)
         self.assertIn("--partition=verified-test-partition", command)
         self.assertIn("--account=project123", command)
-        self.assertIn(f"--output={self.path}/logs/%x-%j.out", command)
+        self.assertIn(f"--output={self.path}/logs/ettin-%j.out", command)
 
     def test_only_partition_and_storage_override_are_needed(self):
         self.config.write_text(f"HPC_WORKDIR={shlex.quote(str(self.path))}\nHPC_PARTITION=verified-test-partition\n")
         result = self.submit("train", "minimal-config")
         self.assertEqual(result.returncode, 0, result.stderr)
         command = shlex.split(result.stdout.splitlines()[-1])
-        for option in ("--gres=gpu:1", "--cpus-per-task=4", "--mem=32G", "--time=24:00:00"):
+        for option in ("--gres=gpu:1", "--cpus-per-task=4", "--mem=16G", "--time=02:00:00"):
             self.assertIn(option, command)
         self.assertFalse(any(option.startswith(("--account=", "--qos=")) for option in command))
+
+    def test_cluster_profile_passes_both_partitions_and_account(self):
+        self.config.write_text((ROOT / "hpc/config.example.sh").read_text() +
+                               f"\nHPC_WORKDIR={shlex.quote(str(self.path))}\n")
+        result = self.submit("train", "two-partition-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        command = shlex.split(result.stdout.splitlines()[-1])
+        for option in ("--partition=gpu-low,gpu-pre", "--account=greenml", "--nodes=1",
+                       "--ntasks=1", "--gres=gpu:1", "--cpus-per-task=4", "--mem=16G",
+                       "--time=02:00:00", f"--output={self.path}/logs/ettin-%j.out",
+                       f"--error={self.path}/logs/ettin-%j.err"):
+            self.assertIn(option, command)
+        self.assertEqual(sum(option.startswith("--partition=") for option in command), 1)
+        self.assertFalse(any(option.startswith(("--constraint=", "--nodelist=")) for option in command))
+
+    def test_optional_node_feature_is_passed_without_fixing_a_hostname(self):
+        with self.config.open("a") as handle:
+            handle.write("HPC_CONSTRAINT=gpu80g\n")
+        result = self.submit("train", "feature-filtered-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        command = shlex.split(result.stdout.splitlines()[-1])
+        self.assertIn("--constraint=gpu80g", command)
+        self.assertFalse(any(option.startswith("--nodelist=") for option in command))
 
     def test_advanced_overrides_still_work(self):
         with self.config.open("a") as handle:

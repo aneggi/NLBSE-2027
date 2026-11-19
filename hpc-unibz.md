@@ -1,9 +1,9 @@
-# Run the NLBSE 2027 baseline on the Bolzano HPC
+# Fine-tune Ettin-32M on the Bolzano HPC
 
 This workflow follows the task and model described in the supplied
 [competition README](code-comment-classification-main/README.md) and
 [evaluation notebook](code-comment-classification-main/CodeBERT_baseline.ipynb).
-It trains one shared CodeBERT encoder with a two-output classification head,
+The default experiment trains an Ettin-32M encoder with a two-output classification head,
 then evaluates the final model on the public `test` split.
 
 ## 1. Confirm the cluster settings and clone the repository
@@ -53,7 +53,8 @@ The SSH username `aaneggi` is not necessarily a Slurm account/project name.
 cp hpc/config.example.sh hpc/config.sh
 ```
 
-**Set `HPC_PARTITION` to your GPU partition.** This is the only required setting
+**Keep `HPC_PARTITION=gpu-pre` for the allocation already tested in this session.**
+For another allocation, set `HPC_PARTITION` to its GPU partition. This is the only required setting
 in the configuration file. Use the output of `sinfo` or the university help to
 find the correct name.
 
@@ -78,8 +79,8 @@ configuration files continue to work.
 | --- | --- |
 | `HPC_PYTHON` | Automatically finds `python3.11`, `python3.12`, or a compatible `python3`; set an executable to override. |
 | `HPC_VENV` | `$HPC_WORKDIR/venv` |
-| `HPC_PREPARED` | `$HPC_WORKDIR/prepared/codebert-512`; change for another model or tokenization. |
-| `HPC_TRAIN_CONFIG` | Repository's `configs/codebert-baseline.json` |
+| `HPC_PREPARED` | `$HPC_WORKDIR/prepared/ettin-32m-512`; change for another model or tokenization. |
+| `HPC_TRAIN_CONFIG` | Repository's `configs/ettin-32m.json` |
 | `TORCH_INDEX_URL` | `https://download.pytorch.org/whl/cu124`; change if the allocated GPU driver needs another wheel. |
 | `HPC_QOS` | Empty; set if required by your allocation. |
 | `HPC_GRES` | `gpu:1`; change if the site requires a GPU type in the resource request. |
@@ -95,6 +96,12 @@ For an alternate configuration file, set an absolute path:
 ```bash
 export HPC_CONFIG=/absolute/path/to/my-hpc-config.sh
 ```
+
+When switching from CodeBERT, keep the existing cluster configuration. If an
+older `hpc/config.sh` explicitly sets `HPC_TRAIN_CONFIG` or `HPC_PREPARED` to
+CodeBERT paths, remove those two overrides to use the new Ettin defaults.
+Run preparation again for Ettin; the old CodeBERT prepared directory and runs
+remain available. Use the new run names below to avoid a name collision.
 
 ## 3. Install the environment and prepare inputs once
 
@@ -118,14 +125,15 @@ This fallback requires HTTPS access to `bootstrap.pypa.io` during setup.
 Setup supports Python 3.11/3.12 and creates an isolated virtual environment with the pinned versions in
 `requirements.txt`; it records all installed versions in
 `$HPC_WORKDIR/environment-freeze.txt`. Local integration was checked with
-Python 3.12 and CPU PyTorch on a tiny random RoBERTa model, including deterministic
-checkpoint resume. Full CodeBERT training and the actual cluster remain untested.
+Python 3.12 and CPU PyTorch on ModernBERT and RoBERTa, including deterministic
+checkpoint resume and exported-model evaluation. The CodeBERT smoke job has run
+on the HPC; full Ettin training still needs to run there.
 PyTorch's
 [previous-version installation instructions](https://pytorch.org/get-started/previous-versions/)
 document the available CUDA and CPU wheel indexes. Verify driver compatibility
 on the actual allocated GPU node, not just the login node.
 
-Preparation downloads `microsoft/codebert-base` and the competition dataset,
+Preparation downloads the pinned `jhu-clsp/ettin-encoder-32m` checkpoint and the competition dataset,
 resolves their Hub revisions to commit hashes, and writes:
 
 ```text
@@ -138,8 +146,8 @@ $HPC_PREPARED/
 
 The input is exactly `Function`, preserving its comments. The existing dataset
 is already formatted; this workflow does not rebuild MADE-WIC, remove comments,
-rebalance classes, or create a new split. It tokenizes with the slow RoBERTa
-tokenizer, truncates to 512 tokens, and pads to that limit. Preparing inputs uses
+rebalance classes, or create a new split. It tokenizes with Ettin's fast tokenizer,
+truncates to 512 tokens, and pads to that limit. Preparing inputs uses
 public test text and labels for tokenization only; training never reads that split.
 An existing prepared directory is protected against replacement. Change
 `HPC_PREPARED` to a new path when changing the model, dataset revision, or token limit.
@@ -153,13 +161,13 @@ environment on shared storage, but no internet access or Hub login.
 Preview the exact submission without enqueueing it:
 
 ```bash
-DRY_RUN=1 bash hpc/submit.sh smoke smoke-001
+DRY_RUN=1 bash hpc/submit.sh smoke ettin-32m-smoke-001
 ```
 
 Submit:
 
 ```bash
-bash hpc/submit.sh smoke smoke-001
+bash hpc/submit.sh smoke ettin-32m-smoke-001
 squeue -u aaneggi
 ```
 
@@ -183,12 +191,12 @@ changing the training configuration. Optional `fp16` or `bf16` training is
 available through `precision`; bf16 requires hardware support. The starting
 configuration uses fp32. Changes in precision can change results.
 
-## 5. Train and evaluate the full baseline
+## 5. Train and evaluate Ettin-32M
 
 After the smoke job succeeds:
 
 ```bash
-bash hpc/submit.sh train codebert-001
+bash hpc/submit.sh train ettin-32m-001
 squeue -u aaneggi
 ```
 
@@ -210,7 +218,9 @@ for this implementation, rather than recovered original settings:
 
 | Parameter | Starting value |
 | --- | --- |
-| Initialization | `microsoft/codebert-base`, new two-output head |
+| Initialization | `jhu-clsp/ettin-encoder-32m`, new two-output classifier |
+| Pooling | Mean pooling, inherited from the Ettin checkpoint |
+| Attention | PyTorch SDPA; reference compilation disabled |
 | Targets | `[Vulnerability, MAT]`, float labels |
 | Loss | Unweighted binary cross entropy with logits |
 | Optimizer | AdamW, learning rate `2e-5`, weight decay `0.01` |
@@ -222,10 +232,13 @@ for this implementation, rather than recovered original settings:
 | Checkpoints | Every `500` optimizer steps, retain the last `2` |
 | Evaluation | Batch `16`, sigmoid probability strictly greater than `0.5` |
 
-The shared encoder, output head, label order, truncation, and threshold follow
-the provided competition baseline. Scores need not match the published model:
-its original fine-tuning settings are missing, and hardware/library differences
-can affect results. Full training time depends on the assigned GPU. The 24-hour
+The task, label order, token limit, and threshold match the competition baseline.
+Ettin changes the encoder, tokenizer, and pooling. The model revision is pinned
+in `configs/ettin-32m.json`; resolved dataset revisions remain in the prepared
+manifest. Other starting hyperparameters match our CodeBERT configuration for
+the first comparison. Neither predictive accuracy nor resource savings are
+assumed; compare full runs on the same hardware. Full training time depends on
+the assigned GPU. The 24-hour
 template limit is a starting request, not a measured estimate.
 
 ## 6. Find results, resume, or evaluate again
@@ -235,7 +248,7 @@ $HPC_WORKDIR/
   environment-freeze.txt
   cache/huggingface/
   logs/nlbse-train-JOBID.{out,err}
-  runs/codebert-001/
+  runs/ettin-32m-001/
     run.json                       # config, inputs, environment, Git state, GPU
     checkpoint-*/                  # model, optimizer, scheduler, RNG, trainer state
     final_model/                   # model, tokenizer, preprocessing.json
@@ -254,7 +267,7 @@ in `run.json`. Check these before reporting results.
 After a time limit or interruption, resume the latest saved checkpoint:
 
 ```bash
-RESUME=auto bash hpc/submit.sh train codebert-001
+RESUME=auto bash hpc/submit.sh train ettin-32m-001
 ```
 
 Use the same configuration and prepared inputs. Resume restores optimizer,
@@ -264,7 +277,7 @@ A run with a final model is protected against another training launch. If only
 evaluation failed, run it separately:
 
 ```bash
-bash hpc/submit.sh evaluate codebert-001
+bash hpc/submit.sh evaluate ettin-32m-001
 ```
 
 For Slurm status and cancellation, substitute the real job ID:
@@ -291,7 +304,7 @@ UTF-8 JSONL with a `Function` string and optional `id` on each line:
 # GPU session or a permitted CPU session, not a large login-node workload.
 source /absolute/path/to/nlbse27/venv/bin/activate
 python scripts/nlbse.py predict \
-  --model /absolute/path/to/nlbse27/runs/codebert-001/final_model \
+  --model /absolute/path/to/nlbse27/runs/ettin-32m-001/final_model \
   --input functions.jsonl --output predictions.jsonl --batch-size 16
 ```
 
@@ -309,18 +322,18 @@ environment active, replace the paths below with absolute shared-storage paths:
 ```bash
 python scripts/nlbse.py prepare --prepared /shared/nlbse/prepared
 python scripts/nlbse.py train --prepared /shared/nlbse/prepared \
-  --output /shared/nlbse/runs/codebert-001 --require-cuda
+  --output /shared/nlbse/runs/ettin-32m-001 --require-cuda
 python scripts/nlbse.py evaluate --prepared /shared/nlbse/prepared \
-  --model /shared/nlbse/runs/codebert-001/final_model \
-  --output /shared/nlbse/runs/codebert-001/evaluation --require-cuda
+  --model /shared/nlbse/runs/ettin-32m-001/final_model \
+  --output /shared/nlbse/runs/ettin-32m-001/evaluation --require-cuda
 ```
 
 For a separate repeated inference benchmark, run in a GPU allocation:
 
 ```bash
 python scripts/nlbse.py evaluate --prepared /shared/nlbse/prepared \
-  --model /shared/nlbse/runs/codebert-001/final_model \
-  --output /shared/nlbse/runs/codebert-001/benchmark \
+  --model /shared/nlbse/runs/ettin-32m-001/final_model \
+  --output /shared/nlbse/runs/ettin-32m-001/benchmark \
   --repetitions 10 --profile-flops --require-cuda
 ```
 
@@ -344,6 +357,9 @@ environment using their evaluator. This script does not calculate an official sc
   selects learning rate `2e-5`, 10 epochs, batch 16, dropout 0.1, and zero L2 penalty;
   those are not evidence for the undisclosed competition checkpoint settings.
 - [CodeBERT](https://aclanthology.org/2020.findings-emnlp.139/): encoder pretraining.
+- [Ettin model](https://huggingface.co/jhu-clsp/ettin-encoder-32m) and
+  [paper](https://arxiv.org/abs/2507.11412): the smaller ModernBERT-based encoder
+  used for this experiment.
 - [Transformers Trainer 4.51.3](https://huggingface.co/docs/transformers/v4.51.3/en/main_classes/trainer):
   training/checkpoint API used here.
 
@@ -354,3 +370,52 @@ encoder models need compatible tokenizers and sequence-classification heads;
 this workflow is currently limited to inputs of at most 512 tokens. New techniques
 such as different comment handling or weighted losses should be separate changes,
 evaluated using a validation partition drawn only from the training split.
+
+## 10. Export the trained model and evaluate in Colab
+
+Once `ettin-32m-001` finishes successfully, run on the HPC:
+
+```bash
+tar -czf "$HOME/nlbse27/ettin-32m-001.tar.gz" \
+  -C "$HOME/nlbse27/runs/ettin-32m-001" final_model run.json
+```
+
+Adjust the paths if you configured a different `HPC_WORKDIR`. Include both the
+model and tokenizer files in `final_model/`, plus `run.json`. The training data,
+prepared cache, and optimizer checkpoints are not needed for Colab evaluation.
+
+From your own computer, download the archive through the university's actual
+SSH hostname (with VPN connected if required):
+
+```bash
+scp aaneggi@YOUR_HPC_LOGIN_HOST:~/nlbse27/ettin-32m-001.tar.gz .
+```
+
+Upload the archive to Google Drive, for example under `MyDrive/NLBSE-2027/`.
+Open [colab/Ettin32M_evaluation.ipynb](colab/Ettin32M_evaluation.ipynb) in Colab,
+choose a GPU runtime, and set `ARCHIVE` to the uploaded file. Run the cells in
+order. The notebook loads the exported classifier and its saved preprocessing,
+tries one example, then evaluates the public test split at the exact revision
+recorded during HPC preparation. Set `MAX_TEST_SAMPLES=16` for a quick check;
+set it back to `None` for the complete public test.
+
+The notebook keeps Colab's GPU-enabled PyTorch and installs the same Transformers
+and Datasets versions as training. It explicitly disables ModernBERT reference
+compilation on load, because Transformers omits that setting from `config.json`.
+Do not replace the checkpoint with the original pretrained Ettin Hub model:
+that would discard the fine-tuned classifier. The old competition notebook's
+`RobertaForSequenceClassification` and `RobertaTokenizer` must be replaced by
+`AutoModelForSequenceClassification` and `AutoTokenizer` for Ettin.
+
+The Colab notebook exports task metrics, predictions, and optional local runtime
+and FLOP estimates. Its portable evaluation cells are exercised locally; Google
+Drive authorization and an actual hosted Colab GPU session are later steps.
+For the official ranking, use the organisers' required evaluation environment.
+
+To run CodeBERT again for comparison, add these explicit overrides to your
+cluster configuration and use a CodeBERT run name:
+
+```bash
+HPC_TRAIN_CONFIG="$REPO_ROOT/configs/codebert-baseline.json"
+HPC_PREPARED="$HPC_WORKDIR/prepared/codebert-512"
+```
