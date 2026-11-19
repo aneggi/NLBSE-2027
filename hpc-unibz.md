@@ -53,19 +53,26 @@ The SSH username `aaneggi` is not necessarily a Slurm account/project name.
 cp hpc/config.example.sh hpc/config.sh
 ```
 
-**Keep `HPC_PARTITION=gpu-pre` for the allocation already tested in this session.**
-For another allocation, set `HPC_PARTITION` to its GPU partition. This is the only required setting
-in the configuration file. Use the output of `sinfo` or the university help to
-find the correct name.
+The current example uses the two partitions from your node listing and the
+account shown in your earlier accepted job:
+
+```bash
+HPC_PARTITION=gpu-low,gpu-pre
+HPC_ACCOUNT=greenml
+```
+
+Both partitions must allow that account; `sinfo` alone does not establish account
+access. Change these values for another allocation. If you already have
+`hpc/config.sh` on the HPC, edit it there: Git deliberately preserves this file.
+Remove any old memory/time overrides or set `HPC_MEM=16G` and `HPC_TIME=02:00:00`.
 
 Everything else has defaults: setup finds Python 3.11/3.12, stores files in
-`$HOME/nlbse27`, and requests one GPU, four CPUs, 32 GB host RAM, and 24 hours
+`$HOME/nlbse27`, and requests one GPU, four CPUs, 16 GB host RAM, and two hours
 (20 minutes for a smoke job). Python modules already loaded in your shell work
 for setup. If a module must also be loaded in batch jobs, add it to `HPC_MODULES`.
 
-The example has three optional lines. Uncomment them only if your site requires
-a different shared storage path (`HPC_WORKDIR`), an accounting project
-(`HPC_ACCOUNT`), or a Python module (`HPC_MODULES`). The home-directory default
+The storage and Python module lines remain optional. Uncomment them if your site
+requires a different shared path (`HPC_WORKDIR`) or module (`HPC_MODULES`). The home-directory default
 must be visible on compute nodes and have enough quota; use the shared storage
 recommended by the university if needed. Allow tens of GB for data and checkpoints.
 
@@ -84,10 +91,34 @@ configuration files continue to work.
 | `TORCH_INDEX_URL` | `https://download.pytorch.org/whl/cu124`; change if the allocated GPU driver needs another wheel. |
 | `HPC_QOS` | Empty; set if required by your allocation. |
 | `HPC_GRES` | `gpu:1`; change if the site requires a GPU type in the resource request. |
-| `HPC_CPUS`, `HPC_MEM` | `4`, `32G` |
-| `HPC_TIME`, `HPC_SMOKE_TIME` | `24:00:00`, `00:20:00`; adjust to queue limits. |
+| `HPC_CONSTRAINT` | Empty, allowing any eligible GPU node; set `gpu80g` to filter to that node feature. |
+| `HPC_CPUS`, `HPC_MEM` | `4`, `16G` |
+| `HPC_TIME`, `HPC_SMOKE_TIME` | `02:00:00`, `00:20:00`; adjust to queue limits. |
 
 </details>
+
+`submit.sh` passes the resource options directly to `sbatch`, equivalent to your
+`#SBATCH` example. It records output under `$HPC_WORKDIR/logs/ettin-JOBID.out`
+and `ettin-JOBID.err`. There is no need to paste a second set of directives into
+the job script. The 16 GB limit is system RAM, not GPU VRAM. Inspect the smoke
+job's `MaxRSS` with `sacct` to check host-memory needs before a full run.
+
+With a comma-separated partition list, Slurm considers the earliest eligible
+start, subject to partition priorities; the list order does not rank GPU speed.
+See the official [partition option](https://slurm.schedmd.com/sbatch.html#OPT_partition).
+One job uses one GPU in one partition. The default is not tied to a hostname or
+GPU model, so it can use the V100, A40, A100, or H200 pool shown in your snapshot.
+Availability changes while a job is queued; let Slurm place the allocation.
+
+If you prefer the A100/H200 nodes in that listing over the broader pool, add
+`HPC_CONSTRAINT=gpu80g`. Based on the features you supplied, this filters to
+nodes carrying that feature and excludes the listed V100/A40 nodes. It is a
+hard node filter, not a GPU memory reservation or a guarantee of earlier completion;
+it can increase queue time. Leave it unset for the broader pool. The meaning of
+`MIXED` concerns allocated resources and does not prove a GPU is free; see
+[Slurm node states](https://slurm.schedmd.com/sinfo.html#SECTION_NODE-STATE-CODES).
+Check actual allocation limits and preemption policy in the university help or
+`scontrol show partition gpu-low` and `scontrol show partition gpu-pre`.
 
 The repository must also be visible from compute nodes. `hpc/config.sh` is
 ignored by Git so pulling updates preserves your machine-specific settings.
@@ -238,8 +269,9 @@ in `configs/ettin-32m.json`; resolved dataset revisions remain in the prepared
 manifest. Other starting hyperparameters match our CodeBERT configuration for
 the first comparison. Neither predictive accuracy nor resource savings are
 assumed; compare full runs on the same hardware. Full training time depends on
-the assigned GPU. The 24-hour
-template limit is a starting request, not a measured estimate.
+the assigned GPU. Two hours is a wall-time cap for each training allocation,
+not a promise that three epochs finish in that time. If needed, use successive
+manual checkpoint resumes without changing the training configuration.
 
 ## 6. Find results, resume, or evaluate again
 
@@ -247,7 +279,7 @@ template limit is a starting request, not a measured estimate.
 $HPC_WORKDIR/
   environment-freeze.txt
   cache/huggingface/
-  logs/nlbse-train-JOBID.{out,err}
+  logs/ettin-JOBID.{out,err}
   runs/ettin-32m-001/
     run.json                       # config, inputs, environment, Git state, GPU
     checkpoint-*/                  # model, optimizer, scheduler, RNG, trainer state
@@ -264,7 +296,15 @@ counts, and their arithmetic mean F1. `full_public_test` states whether the
 entire public test split was evaluated. Training sample/step limits are recorded
 in `run.json`. Check these before reporting results.
 
-After a time limit or interruption, resume the latest saved checkpoint:
+After a time limit or interruption, resume the latest saved checkpoint. This
+is also useful if a selected partition's policy permits preemption; the actual
+policy must be checked, not inferred from partition names:
+
+Use `RESUME=auto` only after the same full run has created checkpoints. For the
+first full training launch, use `bash hpc/submit.sh train ettin-32m-001` without
+`RESUME`. A successful smoke job creates a separate run and does not initialize
+the full training run. The submit wrapper rejects missing runs/checkpoints before
+requesting GPU resources.
 
 ```bash
 RESUME=auto bash hpc/submit.sh train ettin-32m-001

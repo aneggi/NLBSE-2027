@@ -175,7 +175,30 @@ class SubmissionTests(unittest.TestCase):
         (self.path / "runs/existing").mkdir(parents=True)
         self.assertNotEqual(self.submit("train", "existing").returncode, 0)
         self.env["RESUME"] = "auto"
+        self.assertNotEqual(self.submit("train", "existing").returncode, 0)
+        (self.path / "runs/existing/run.json").write_text("{}")
+        checkpoint = self.path / "runs/existing/checkpoint-500"
+        checkpoint.mkdir()
+        (checkpoint / "trainer_state.json").write_text("{}")
         self.assertEqual(self.submit("train", "existing").returncode, 0)
+
+    def test_resume_missing_run_is_rejected_before_submission(self):
+        self.env["RESUME"] = "auto"
+        result = self.submit("train", "never-started")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("without RESUME", result.stderr)
+        self.assertNotIn("sbatch", result.stdout)
+        self.assertFalse((self.path / "runs/never-started").exists())
+
+    def test_resume_rejects_run_without_saved_checkpoints(self):
+        run = self.path / "runs/interrupted-early"
+        run.mkdir(parents=True)
+        (run / "run.json").write_text("{}")
+        self.env["RESUME"] = "auto"
+        result = self.submit("train", "interrupted-early")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("No saved checkpoint", result.stderr)
+        self.assertNotIn("sbatch", result.stdout)
 
     def test_evaluation_requires_saved_model(self):
         self.assertNotEqual(self.submit("evaluate", "absent").returncode, 0)

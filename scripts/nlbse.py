@@ -198,9 +198,12 @@ def train(args):
         raise ValueError("This GPU does not support bf16")
     previous = None
     if args.resume:
-        previous = get_last_checkpoint(str(args.output)) if args.resume == "auto" else args.resume
+        if args.resume == "auto":
+            previous = get_last_checkpoint(str(args.output)) if args.output.is_dir() else None
+        else:
+            previous = args.resume
         if not previous or not Path(previous).is_dir():
-            raise ValueError("No resume checkpoint found")
+            raise ValueError("No resume checkpoint found; start a new training run without --resume")
         old = read_json(args.output / "run.json")
         if old["config"] != config or old["prepared"] != manifest or old["max_steps"] != args.max_steps or old["max_train_samples"] != args.max_train_samples:
             raise ValueError("Resume requires the same configuration, inputs, and sample/step limits")

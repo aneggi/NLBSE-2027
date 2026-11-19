@@ -89,6 +89,9 @@ def main():
 
         common = ["--config", config_path, "--prepared", prepared]
         output = directory / "run"
+        missing = run("train", *common, "--output", output, "--resume", "auto", succeeds=False)
+        assert "No resume checkpoint found" in missing.stderr and "FileNotFoundError" not in missing.stderr
+        assert not output.exists()
         run("train", *common, "--output", output, "--max-steps", 2)
         # A second launch must not silently overwrite a trained model.
         run("train", *common, "--output", output, "--max-steps", 2, succeeds=False)

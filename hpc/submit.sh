@@ -33,6 +33,25 @@ if [[ "$mode" != evaluate && -z "$NLBSE_RESUME" && -d "$NLBSE_RUN_DIR" ]]; then
     echo "Run already exists; choose a new name or set RESUME=auto." >&2
     exit 1
 fi
+if [[ "$mode" != evaluate && -n "$NLBSE_RESUME" ]]; then
+    if [[ ! -f "$NLBSE_RUN_DIR/run.json" ]]; then
+        echo "No training run to resume: $NLBSE_RUN_DIR" >&2
+        echo "Start a new run without RESUME: bash hpc/submit.sh $mode $run_name" >&2
+        exit 1
+    fi
+    checkpoint_found=false
+    if [[ "$NLBSE_RESUME" == auto ]]; then
+        for state in "$NLBSE_RUN_DIR"/checkpoint-*/trainer_state.json; do
+            if [[ -f "$state" ]]; then checkpoint_found=true; break; fi
+        done
+    elif [[ -f "$NLBSE_RESUME/trainer_state.json" ]]; then
+        checkpoint_found=true
+    fi
+    if [[ "$checkpoint_found" != true ]]; then
+        echo "No saved checkpoint to resume for $NLBSE_RUN_DIR. Checkpoints from a separate smoke run cannot resume this run." >&2
+        exit 1
+    fi
+fi
 time_limit="$HPC_TIME"
 if [[ "$mode" == smoke ]]; then time_limit="$HPC_SMOKE_TIME"; fi
 mkdir -p "$HPC_WORKDIR/logs"
