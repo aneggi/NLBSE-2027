@@ -8,12 +8,23 @@ if [[ ! -f "$HPC_CONFIG" ]]; then
     exit 1
 fi
 HPC_CONFIG="$(cd -- "$(dirname -- "$HPC_CONFIG")" && pwd)/$(basename -- "$HPC_CONFIG")"
+HPC_MODULES=()
 # shellcheck source=/dev/null
 source "$HPC_CONFIG"
-: "${HPC_WORKDIR:?Set HPC_WORKDIR in hpc/config.sh}"
-: "${HPC_VENV:?Set HPC_VENV in hpc/config.sh}"
-: "${HPC_PREPARED:?Set HPC_PREPARED in hpc/config.sh}"
-: "${HPC_TRAIN_CONFIG:?Set HPC_TRAIN_CONFIG in hpc/config.sh}"
+# Normal runs only need a GPU partition. These can still be overridden in config.sh.
+HPC_WORKDIR="${HPC_WORKDIR:-$HOME/nlbse27}"
+HPC_VENV="${HPC_VENV:-$HPC_WORKDIR/venv}"
+HPC_PREPARED="${HPC_PREPARED:-$HPC_WORKDIR/prepared/codebert-512}"
+HPC_TRAIN_CONFIG="${HPC_TRAIN_CONFIG:-$REPO_ROOT/configs/codebert-baseline.json}"
+HPC_PYTHON="${HPC_PYTHON:-}"
+TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu124}"
+HPC_ACCOUNT="${HPC_ACCOUNT:-}"
+HPC_QOS="${HPC_QOS:-}"
+HPC_GRES="${HPC_GRES:-gpu:1}"
+HPC_CPUS="${HPC_CPUS:-4}"
+HPC_MEM="${HPC_MEM:-32G}"
+HPC_TIME="${HPC_TIME:-24:00:00}"
+HPC_SMOKE_TIME="${HPC_SMOKE_TIME:-00:20:00}"
 for path in "$HPC_WORKDIR" "$HPC_VENV" "$HPC_PREPARED" "$HPC_TRAIN_CONFIG"; do
     if [[ "$path" != /* ]]; then
         echo "HPC storage and configuration paths must be absolute: $path" >&2
@@ -33,6 +44,22 @@ load_hpc_modules() {
         fi
         module load "${HPC_MODULES[@]}"
     fi
+}
+
+find_hpc_python() {
+    local candidate
+    local candidates=(python3.11 python3.12 python3)
+    if [[ -n "$HPC_PYTHON" ]]; then candidates=("$HPC_PYTHON"); fi
+    for candidate in "${candidates[@]}"; do
+        if command -v "$candidate" >/dev/null 2>&1 && \
+            "$candidate" -c 'import sys; assert sys.version_info[:2] in ((3, 11), (3, 12))' 2>/dev/null; then
+            HPC_PYTHON="$candidate"
+            return
+        fi
+    done
+    echo "Python 3.11/3.12 not found. Load your cluster's Python module, or set HPC_MODULES in $HPC_CONFIG." >&2
+    echo "You can also set HPC_PYTHON to a specific Python 3.11/3.12 executable." >&2
+    exit 1
 }
 
 activate_hpc_env() {

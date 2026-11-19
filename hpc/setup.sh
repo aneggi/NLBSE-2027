@@ -2,7 +2,8 @@
 set -euo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
 load_hpc_modules
-"$HPC_PYTHON" -c 'import sys; assert sys.version_info[:2] in ((3, 11), (3, 12)), "Use Python 3.11 or 3.12 for this environment"'
+find_hpc_python
+echo "Using $HPC_PYTHON; workspace: $HPC_WORKDIR"
 mkdir -p "$HPC_WORKDIR" "$HF_HOME"
 if [[ ! -x "$HPC_VENV/bin/python" ]]; then
     "$HPC_PYTHON" -m venv "$HPC_VENV"

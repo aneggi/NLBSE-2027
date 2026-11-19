@@ -53,8 +53,8 @@ class SubmissionTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="nlbse tests ")
         self.addCleanup(self.temp.cleanup)
         self.path = Path(self.temp.name)
-        prepared = self.path / "prepared"
-        prepared.mkdir()
+        prepared = self.path / "prepared/codebert-512"
+        prepared.mkdir(parents=True)
         (prepared / "manifest.json").write_text("{}")
         venv = self.path / "venv/bin"
         venv.mkdir(parents=True)
@@ -63,11 +63,7 @@ class SubmissionTests(unittest.TestCase):
         self.config = self.path / "config.sh"
         self.config.write_text("\n".join([
             f"HPC_WORKDIR={shlex.quote(str(self.path))}",
-            'HPC_VENV="$HPC_WORKDIR/venv"', 'HPC_PREPARED="$HPC_WORKDIR/prepared"',
-            'HPC_TRAIN_CONFIG="$REPO_ROOT/configs/codebert-baseline.json"',
-            "HPC_MODULES=()", "HPC_PARTITION=verified-test-partition", "HPC_ACCOUNT=project123",
-            "HPC_QOS=normal", "HPC_GRES=gpu:1", "HPC_CPUS=4", "HPC_MEM=32G",
-            "HPC_TIME=24:00:00", "HPC_SMOKE_TIME=00:20:00",
+            "HPC_PARTITION=verified-test-partition", "HPC_ACCOUNT=project123", "HPC_QOS=normal",
         ]) + "\n")
         self.env = dict(os.environ, HPC_CONFIG=str(self.config), DRY_RUN="1")
         self.env.pop("RESUME", None)
@@ -84,6 +80,48 @@ class SubmissionTests(unittest.TestCase):
         self.assertIn("--partition=verified-test-partition", command)
         self.assertIn("--account=project123", command)
         self.assertIn(f"--output={self.path}/logs/%x-%j.out", command)
+
+    def test_only_partition_and_storage_override_are_needed(self):
+        self.config.write_text(f"HPC_WORKDIR={shlex.quote(str(self.path))}\nHPC_PARTITION=verified-test-partition\n")
+        result = self.submit("train", "minimal-config")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        command = shlex.split(result.stdout.splitlines()[-1])
+        for option in ("--gres=gpu:1", "--cpus-per-task=4", "--mem=32G", "--time=24:00:00"):
+            self.assertIn(option, command)
+        self.assertFalse(any(option.startswith(("--account=", "--qos=")) for option in command))
+
+    def test_advanced_overrides_still_work(self):
+        with self.config.open("a") as handle:
+            handle.write("HPC_MEM=64G\nHPC_TIME=06:00:00\n")
+        result = self.submit("train", "custom-limits")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        command = shlex.split(result.stdout.splitlines()[-1])
+        self.assertIn("--mem=64G", command)
+        self.assertIn("--time=06:00:00", command)
+
+    def test_python_detection_skips_unsupported_interpreter(self):
+        binary = self.path / "python-bin"
+        binary.mkdir()
+        for name, status in (("python3.11", 1), ("python3.12", 0)):
+            interpreter = binary / name
+            interpreter.write_text(f"#!/bin/sh\nexit {status}\n")
+            interpreter.chmod(0o755)
+        self.env["PATH"] = f"{binary}:{self.env['PATH']}"
+        result = subprocess.run(["bash", "-c", 'source "$1"; load_hpc_modules; find_hpc_python; echo "$HPC_PYTHON"',
+                                 "_", str(ROOT / "hpc/common.sh")], env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "python3.12")
+
+    def test_explicit_unsupported_python_fails_with_guidance(self):
+        unsupported = self.path / "unsupported-python"
+        unsupported.write_text("#!/bin/sh\nexit 1\n")
+        unsupported.chmod(0o755)
+        with self.config.open("a") as handle:
+            handle.write(f"HPC_PYTHON={shlex.quote(str(unsupported))}\n")
+        result = subprocess.run(["bash", "-c", 'source "$1"; find_hpc_python',
+                                 "_", str(ROOT / "hpc/common.sh")], env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HPC_MODULES", result.stderr)
 
     def test_unverified_partition_rejected(self):
         self.config.write_text(self.config.read_text().replace("verified-test-partition", "CHANGE_ME"))

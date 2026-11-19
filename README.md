@@ -8,8 +8,18 @@ baseline architecture before trying other models or techniques.
 as `aaneggi`, configuring the cluster, preparing offline inputs, running a smoke
 job, training, resuming, evaluating, and predicting on new functions.
 
+On the Slurm HPC, copy the small configuration file:
+
 ```bash
-# On the HPC, after configuring hpc/config.sh as described in the guide:
+cp hpc/config.example.sh hpc/config.sh
+```
+
+Set **`HPC_PARTITION`** in `hpc/config.sh` to your GPU partition (check `sinfo`).
+Python 3.11/3.12 is detected automatically and files default to `$HOME/nlbse27`.
+If the cluster requires a shared storage path, accounting project, or Python
+module, uncomment the matching optional line. Then run:
+
+```bash
 bash hpc/setup.sh
 bash hpc/prepare.sh
 bash hpc/submit.sh smoke smoke-001

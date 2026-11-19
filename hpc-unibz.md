@@ -53,24 +53,40 @@ The SSH username `aaneggi` is not necessarily a Slurm account/project name.
 cp hpc/config.example.sh hpc/config.sh
 ```
 
-Edit `hpc/config.sh` on the cluster:
+**Set `HPC_PARTITION` to your GPU partition.** This is the only required setting
+in the configuration file. Use the output of `sinfo` or the university help to
+find the correct name.
 
-| Setting | What to enter |
+Everything else has defaults: setup finds Python 3.11/3.12, stores files in
+`$HOME/nlbse27`, and requests one GPU, four CPUs, 32 GB host RAM, and 24 hours
+(20 minutes for a smoke job). Python modules already loaded in your shell work
+for setup. If a module must also be loaded in batch jobs, add it to `HPC_MODULES`.
+
+The example has three optional lines. Uncomment them only if your site requires
+a different shared storage path (`HPC_WORKDIR`), an accounting project
+(`HPC_ACCOUNT`), or a Python module (`HPC_MODULES`). The home-directory default
+must be visible on compute nodes and have enough quota; use the shared storage
+recommended by the university if needed. Allow tens of GB for data and checkpoints.
+
+<details>
+<summary>Advanced overrides (usually leave these alone)</summary>
+
+Add any of these settings to `hpc/config.sh` when needed. Existing full
+configuration files continue to work.
+
+| Setting | Default / purpose |
 | --- | --- |
-| `HPC_WORKDIR` | Persistent storage visible on both login and compute nodes, with enough quota for caches, tokenized data, and checkpoints. |
-| `HPC_MODULES` | Actual module names, for example an array containing your site's Python module; leave empty if unnecessary. |
-| `HPC_PYTHON` | Python 3.11 or 3.12 executable available after loading modules. |
-| `TORCH_INDEX_URL` | Official PyTorch wheel index compatible with the GPU driver; `cu124` is the template choice. |
-| `HPC_PARTITION` | Verified GPU partition; replace `CHANGE_ME`. |
-| `HPC_ACCOUNT`, `HPC_QOS` | Required allocation settings, or empty if the site does not require them. |
-| `HPC_GRES` | Site-specific GPU resource syntax; template requests `gpu:1`. |
-| `HPC_TIME`, `HPC_MEM`, `HPC_CPUS` | Limits allowed by that queue; the template requests 24 hours, 32 GB host RAM, and four CPUs. |
+| `HPC_PYTHON` | Automatically finds `python3.11`, `python3.12`, or a compatible `python3`; set an executable to override. |
+| `HPC_VENV` | `$HPC_WORKDIR/venv` |
+| `HPC_PREPARED` | `$HPC_WORKDIR/prepared/codebert-512`; change for another model or tokenization. |
+| `HPC_TRAIN_CONFIG` | Repository's `configs/codebert-baseline.json` |
+| `TORCH_INDEX_URL` | `https://download.pytorch.org/whl/cu124`; change if the allocated GPU driver needs another wheel. |
+| `HPC_QOS` | Empty; set if required by your allocation. |
+| `HPC_GRES` | `gpu:1`; change if the site requires a GPU type in the resource request. |
+| `HPC_CPUS`, `HPC_MEM` | `4`, `32G` |
+| `HPC_TIME`, `HPC_SMOKE_TIME` | `24:00:00`, `00:20:00`; adjust to queue limits. |
 
-The template uses `$HOME/nlbse27` as a fallback workspace, not as a verified
-university recommendation. Prefer the shared project/scratch path specified in
-the HPC help. Keep long-term results off storage subject to automatic deletion.
-Allow tens of GB for data, download caches, optimizer checkpoints, and final weights.
-These scripts use one GPU; available GPU memory must be checked with the smoke job.
+</details>
 
 The repository must also be visible from compute nodes. `hpc/config.sh` is
 ignored by Git so pulling updates preserves your machine-specific settings.
