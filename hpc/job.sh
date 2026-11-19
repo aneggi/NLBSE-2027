@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-source "$(dirname -- "${BASH_SOURCE[0]}")/common.sh"
 : "${SLURM_JOB_ID:?Run this script through hpc/submit.sh}"
+# Slurm executes a spool copy of this file. submit.sh exports the original
+# repository path via common.sh and --export=ALL; BASH_SOURCE points at the copy.
+: "${REPO_ROOT:?Missing repository path; submit through hpc/submit.sh}"
+source "$REPO_ROOT/hpc/common.sh"
 : "${NLBSE_MODE:?Missing submission mode}"
 : "${NLBSE_RUN_DIR:?Missing run directory}"
 activate_hpc_env

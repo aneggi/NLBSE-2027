@@ -3,7 +3,9 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -145,14 +147,48 @@ class SubmissionTests(unittest.TestCase):
         binary = self.path / "bin"
         binary.mkdir()
         mock = binary / "sbatch"
-        mock.write_text('#!/bin/bash\nprintf "%s\\n" "$NLBSE_MODE" "$NLBSE_RUN_DIR" "$HPC_CONFIG" "$@"\n')
+        mock.write_text('#!/bin/bash\nprintf "%s\\n" "$NLBSE_MODE" "$NLBSE_RUN_DIR" "$HPC_CONFIG" "$REPO_ROOT" "$@"\n')
         mock.chmod(0o755)
         self.env.update(DRY_RUN="0", PATH=f"{binary}:{self.env['PATH']}")
         result = self.submit("train", "new-run")
         self.assertEqual(result.returncode, 0, result.stderr)
         lines = result.stdout.splitlines()
-        self.assertEqual(lines[:3], ["train", str(self.path / "runs/new-run"), str(self.config)])
+        self.assertEqual(lines[:4], ["train", str(self.path / "runs/new-run"), str(self.config), str(ROOT)])
         self.assertIn("--export=ALL", lines)
+
+    def test_smoke_job_runs_from_slurm_spool_directory(self):
+        spool = self.path / "slurm spool/job276325"
+        spool.mkdir(parents=True)
+        script = spool / "slurm_script"
+        shutil.copyfile(ROOT / "hpc/job.sh", script)
+        calls_path = self.path / "python-calls.jsonl"
+        venv_bin = self.path / "venv/bin"
+        (venv_bin / "activate").write_text(f"export PATH={shlex.quote(str(venv_bin))}:\"$PATH\"\n")
+        (venv_bin / "python").write_text(
+            f"#!{sys.executable}\n"
+            "import json, os, sys\n"
+            "with open(os.environ['NLBSE_TEST_CALLS'], 'a') as handle:\n"
+            "    handle.write(json.dumps({'args': sys.argv[1:], "
+            "'offline': os.environ.get('HF_HUB_OFFLINE'), "
+            "'threads': os.environ.get('OMP_NUM_THREADS')}) + '\\n')\n"
+        )
+        env = dict(self.env, REPO_ROOT=str(ROOT), SLURM_JOB_ID="276325", SLURM_CPUS_PER_TASK="4",
+                   NLBSE_MODE="smoke", NLBSE_RUN_DIR=str(self.path / "runs/spooled-smoke"),
+                   NLBSE_TEST_CALLS=str(calls_path))
+        result = subprocess.run(["bash", str(script)], cwd=spool, env=env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [json.loads(line) for line in calls_path.read_text().splitlines()]
+        training = next(call for call in calls if "train" in call["args"])
+        evaluation = next(call for call in calls if "evaluate" in call["args"])
+        self.assertEqual(training["args"][0], str(ROOT / "scripts/nlbse.py"))
+        self.assertIn("--max-steps", training["args"])
+        self.assertEqual(training["args"][-4:], ["--max-steps", "2", "--max-train-samples", "32"])
+        self.assertEqual(evaluation["args"][-2:], ["--max-test-samples", "16"])
+        self.assertIn(str(self.path / "runs/spooled-smoke/evaluation-276325"), evaluation["args"])
+        for call in (training, evaluation):
+            self.assertEqual(call["offline"], "1")
+            self.assertEqual(call["threads"], "4")
 
 
 if __name__ == "__main__":

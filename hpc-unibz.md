@@ -168,6 +168,14 @@ at most 16 public test examples. Inspect both `.out` and `.err` logs under
 `$HPC_WORKDIR/logs`, plus the run's `evaluation-JOBID/metrics.json`.
 Smoke results are pipeline checks and must not be reported as competition results.
 
+If a job exits immediately, inspect its `.err` file and check
+`sacct -j JOBID --format=JobID,State,Elapsed,ExitCode`. An error looking for
+`common.sh` inside `/var/lib/slurm/...` means the job script is an older copy:
+update `hpc/job.sh` before resubmitting. The current script loads helpers through
+the repository path exported by `submit.sh`, because Slurm runs a spool copy of
+the script. If the job failed before creating a run directory, the same run name
+can be submitted again; setup and data preparation do not need to be repeated.
+
 On CUDA out-of-memory errors, reduce `batch_size` in the JSON configuration and
 raise `gradient_accumulation_steps` to preserve the effective training batch size.
 Reduce `eval_batch_size` separately for evaluation. Use a new run name after
