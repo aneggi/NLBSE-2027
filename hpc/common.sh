@@ -64,8 +64,9 @@ find_hpc_python() {
 
 activate_hpc_env() {
     load_hpc_modules
-    if [[ ! -x "$HPC_VENV/bin/python" ]]; then
-        echo "Missing environment; run bash hpc/setup.sh first." >&2
+    if [[ ! -x "$HPC_VENV/bin/python" || ! -f "$HPC_VENV/bin/activate" ]] || \
+        ! "$HPC_VENV/bin/python" -c 'import sys, pip; assert sys.prefix != sys.base_prefix' >/dev/null 2>&1; then
+        echo "Missing or incomplete environment; run bash hpc/setup.sh first." >&2
         exit 1
     fi
     # shellcheck source=/dev/null

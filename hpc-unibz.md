@@ -107,6 +107,14 @@ bash hpc/setup.sh
 bash hpc/prepare.sh
 ```
 
+If the system Python lacks `ensurepip` (the `python3-venv` package), setup
+automatically uses the official [virtualenv zipapp](https://virtualenv.pypa.io/en/stable/how-to/install.html).
+It downloads the bootstrap into `$HPC_WORKDIR/cache/virtualenv` and creates the
+environment in your own workspace. No administrator access or system package
+installation is needed. An incomplete environment from an earlier failed attempt
+is repaired in place; rerun setup without deleting the environment directory.
+This fallback requires HTTPS access to `bootstrap.pypa.io` during setup.
+
 Setup supports Python 3.11/3.12 and creates an isolated virtual environment with the pinned versions in
 `requirements.txt`; it records all installed versions in
 `$HPC_WORKDIR/environment-freeze.txt`. Local integration was checked with

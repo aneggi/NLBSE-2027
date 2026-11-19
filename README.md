@@ -16,6 +16,7 @@ cp hpc/config.example.sh hpc/config.sh
 
 Set **`HPC_PARTITION`** in `hpc/config.sh` to your GPU partition (check `sinfo`).
 Python 3.11/3.12 is detected automatically and files default to `$HOME/nlbse27`.
+Setup handles a missing `ensurepip`/`python3-venv` automatically, without `sudo`.
 If the cluster requires a shared storage path, accounting project, or Python
 module, uncomment the matching optional line. Then run:
 
