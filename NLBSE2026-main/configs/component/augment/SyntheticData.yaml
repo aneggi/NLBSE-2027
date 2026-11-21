@@ -1,0 +1,4 @@
+modelname: "all-MiniLM-L6-v2"
+augments: 15
+topn: 20
+mask_ratio: 0.25

@@ -84,7 +84,7 @@ configuration files continue to work.
 
 | Setting | Default / purpose |
 | --- | --- |
-| `HPC_MODEL` | `ettin-32m`; prefix a command with `HPC_MODEL=ettin-17m` for the other model. |
+| `HPC_MODEL` | `ettin-32m`; select `ettin-17m` or `codebert-baseline` per command. |
 | `HPC_PYTHON` | Automatically finds `python3.11`, `python3.12`, or a compatible `python3`; set an executable to override. |
 | `HPC_VENV` | `$HPC_WORKDIR/venv` |
 | `HPC_PREPARED` | `$HPC_WORKDIR/prepared/$HPC_MODEL-512`; follows the selected model. |
@@ -93,6 +93,7 @@ configuration files continue to work.
 | `HPC_QOS` | Empty; set if required by your allocation. |
 | `HPC_GRES` | `gpu:1`; change if the site requires a GPU type in the resource request. |
 | `HPC_CONSTRAINT` | Empty, allowing any eligible GPU node; set `gpu80g` to filter to that node feature. |
+| `HPC_NODELIST` | Empty; optionally select a verified previous node for hardware comparisons. |
 | `HPC_CPUS`, `HPC_MEM` | `4`, `16G` |
 | `HPC_TIME`, `HPC_SMOKE_TIME` | `02:00:00`, `00:20:00`; adjust to queue limits. |
 
@@ -440,8 +441,14 @@ tries one example, then evaluates the public test split at the exact revision
 recorded during HPC preparation. Set `MAX_TEST_SAMPLES=16` for a quick check;
 set it back to `None` for the complete public test.
 
-The notebook keeps Colab's GPU-enabled PyTorch and installs the same Transformers
-and Datasets versions as training. It explicitly disables ModernBERT reference
+The notebook keeps Colab's GPU-enabled PyTorch and uses evaluation versions of
+Transformers/Datasets compatible with current Colab packages. HPC training stays
+on its original pinned requirements. The install cell preserves the `fsspec`
+requirement of installed `gcsfs` and uses a Hub version compatible with the
+reported Gradio/Diffusers requirements. Restart the Colab session after changing
+packages, before loading the model. Evaluation library versions are recorded in
+the metrics; old-library exports were checked against the updated inference path.
+The notebook explicitly disables ModernBERT reference
 compilation on load, because Transformers omits that setting from `config.json`.
 Do not replace the checkpoint with the original pretrained Ettin Hub model:
 that would discard the fine-tuned classifier. The old competition notebook's
@@ -490,10 +497,141 @@ To resume the same 17M training run after it has saved checkpoints:
 HPC_MODEL=ettin-17m RESUME=auto ./submit.sh train ettin-17m-001
 ```
 
-To run CodeBERT again for comparison, add these explicit overrides to your
-cluster configuration and use a CodeBERT run name:
+## 12. Recover completed job times and benchmark CodeBERT
+
+Run these commands in your SSH session. `squeue` shows the current queue;
+`sacct` queries completed jobs if the cluster retains their accounting records.
+List the past 90 days, using only parent allocations to avoid counting `.batch`
+and `.extern` steps again:
 
 ```bash
-HPC_TRAIN_CONFIG="$REPO_ROOT/configs/codebert-baseline.json"
-HPC_PREPARED="$HPC_WORKDIR/prepared/codebert-512"
+sacct -u aaneggi -S now-90days -X \
+  --format=JobID,JobName%30,State,Elapsed,NodeList%20,AllocTRES%100
 ```
+
+The earlier screenshots showed custom site formatting. An explicit `--format`
+selects the fields needed here. For one job, replace `JOBID` with its numeric ID:
+
+```bash
+sacct -j JOBID -X \
+  --format=JobID,JobName%30,State,Submit,Start,End,Elapsed,ElapsedRaw,NodeList%20,AllocTRES%100,ExitCode
+```
+
+`Elapsed` is job elapsed wall time; `ElapsedRaw` expresses it in seconds.
+Queue waiting is separate: inspect `Submit` and `Start`. `CPUTime` is elapsed
+time multiplied by allocated CPUs and is not training wall time. `AllocTRES`
+can identify the allocated GPU type, while `NodeList` identifies the host. The
+run's `run.json` also stores PyTorch's actual GPU name.
+See the [official Slurm field definitions](https://slurm.schedmd.com/sacct.html).
+An empty result does not prove the job never ran: extend the date range or ask
+the HPC team about accounting retention.
+
+Export the allocation history as a pipe-separated file:
+
+```bash
+sacct -u aaneggi -S now-90days -X --parsable2 \
+  --format=JobID,JobName,State,ElapsedRaw,NodeList,AllocTRES,Start,End \
+  > "$HOME/nlbse27/job-history.psv"
+```
+
+Our `train` job trains and then evaluates the complete public test set.
+Consequently, job elapsed time includes startup, model loading, training,
+checkpoint saving, and evaluation. To inspect the Trainer's training-loop
+duration, run this lightweight command on the login node. It uses the default
+workspace; adjust the path if `HPC_WORKDIR` differs:
+
+```bash
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+for path in sorted((Path.home() / "nlbse27/runs").glob("*/train_results.json")):
+    run_dir = path.parent
+    metrics = json.loads(path.read_text())
+    run = json.loads((run_dir / "run.json").read_text())
+    seconds = metrics.get("train_runtime")
+    print(f"{run_dir.name}: GPU={run.get('device', 'unknown')}; "
+          f"train_seconds={seconds}; "
+          f"train_hours={seconds / 3600 if seconds is not None else None}; "
+          f"epochs={metrics.get('epoch')}; "
+          f"max_steps={run.get('max_steps')}; "
+          f"max_train_samples={run.get('max_train_samples')}")
+PY
+```
+
+These are CPU-only JSON reads, not model execution. Ignore smoke runs when
+comparing full training. The Trainer timer is scoped to the training loop;
+loading, final export, and test inference are outside it. After checkpoint
+resume, `train_results.json` describes the final invocation and does not recover
+all earlier attempts. For an interrupted run, identify every job from its
+`.out` header (`Job ...; run ...`) and sum parent-allocation `ElapsedRaw` values
+to obtain cumulative allocated job time. Include timeout/preempted attempts;
+do not sum `.batch`/`.extern` rows or label the sum as pure training time.
+Without historical stage timers, exact cumulative training-only time may not
+be recoverable. Preserve the files before rerunning anything.
+
+For existing HPC evaluations, `runs/RUN/evaluation-JOBID/metrics.json` contains
+`wall_seconds` for the evaluation loop and `forward_seconds_per_pass` for the
+average forward-only pass. Neither is the training duration. These HPC results
+also do not replace the competition's T4 benchmark.
+
+The competition's original backbone is
+[`microsoft/codebert-base`](https://github.com/nlbse2027/code-comment-classification#codebert-baseline).
+The organizer checkpoint is already fine-tuned. To compare the cost of adapting
+the original backbone against Ettin, start from pretrained CodeBERT and use
+the existing `configs/codebert-baseline.json`: three epochs, FP32, 512 tokens,
+batch 8 and accumulation 2, with the same optimizer settings as our Ettin runs.
+This controls our training procedure; it does not claim to reconstruct an
+unpublished organizer training recipe.
+
+After syncing these repository changes to the cluster, from `hpc/`:
+
+```bash
+HPC_MODEL=codebert-baseline ./prepare.sh
+
+# Example only if the completed Ettin run used a V100 allocation:
+HPC_MODEL=codebert-baseline HPC_GRES=gpu:v100:1 DRY_RUN=1 \
+  ./submit.sh smoke codebert-smoke-001
+HPC_MODEL=codebert-baseline HPC_GRES=gpu:v100:1 \
+  ./submit.sh smoke codebert-smoke-001
+
+# Once smoke succeeds:
+HPC_MODEL=codebert-baseline HPC_GRES=gpu:v100:1 \
+  ./submit.sh train codebert-001
+```
+
+No setup reinstall is needed. Remove stale explicit `HPC_TRAIN_CONFIG` and
+`HPC_PREPARED` overrides in `config.sh` before selecting a model profile. New
+inputs go to `prepared/codebert-baseline-512`; the output is `runs/codebert-001`;
+logs are `logs/codebert-JOBID.out` and `.err`. Existing Ettin paths are preserved.
+Preparation protects an existing cache against replacement; reuse a verified
+matching cache rather than repeatedly preparing into the same directory.
+
+`HPC_GRES=gpu:v100:1` uses the typed GRES name in your supplied node listing.
+It restricts the GPU family, but V100 variants can still differ. Inspect the
+completed Ettin run's actual GPU and node first. If the previous node was, for
+example, `hpcsgn07`, optionally add `HPC_NODELIST=hpcsgn07` to the submission
+commands; substitute your real node. This limits placement and may increase
+waiting time; it does not reserve a particular physical GPU on a multi-GPU node.
+Check the dry-run resource request, especially if `config.sh` sets GPU options
+that override command-prefixed values. Remove a conflicting `gpu80g` constraint
+before requesting a V100. See Slurm's
+[typed GPU requests](https://slurm.schedmd.com/gres.html) and
+[node-list option](https://slurm.schedmd.com/sbatch.html#OPT_nodelist).
+
+Match the prepared manifests' dataset revision and split sizes, GPU variant,
+FP32 precision, effective batch, token limit, and epoch count across runs.
+Host load and software versions can still affect timing. A lower parameter
+count alone does not establish a measured speedup or power saving.
+
+The default two-hour allocation cap remains in force. If training times out
+after creating a checkpoint, resume with the same hardware selection:
+
+```bash
+HPC_MODEL=codebert-baseline HPC_GRES=gpu:v100:1 RESUME=auto \
+  ./submit.sh train codebert-001
+```
+
+Use `RESUME=auto` only for a run with saved checkpoints. If the final model exists
+and only evaluation failed, use the same profile with `./submit.sh evaluate
+codebert-001` instead of retraining. Preserve all job IDs for total-time reporting.

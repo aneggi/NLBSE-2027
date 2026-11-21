@@ -1,0 +1,227 @@
+<div align="center">
+
+# High-quality data augmentation for code comment classification
+
+<a href="https://pytorch.org/get-started/locally/"><img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-ee4c2c?logo=pytorch&logoColor=white"></a>
+<a href="https://hydra.cc/"><img alt="Config: Hydra" src="https://img.shields.io/badge/Config-Hydra-89b8cd"></a>
+<a href="https://huggingface.co/username/finetuned-model">
+  <img alt="Fine-tuned Model: HF" src="https://img.shields.io/badge/Model-Hugging%20Face-6f42c1?logo=huggingface&logoColor=white">
+</a>
+
+[![Conference](http://img.shields.io/badge/Conference-NLBSE2026-4b44ce.svg)](https://nlbse2026.github.io/index.html)
+[![license](https://img.shields.io/badge/License-MIT-green.svg?labelColor=gray)](https://github.com/ashleve/lightning-hydra-template#license)
+
+</div>
+
+## Description
+
+### Abstact
+Code comments serve a crucial role in software development for documenting functionality, clarifying design choices, and assisting with issue tracking. 
+They capture developers' insights about the surrounding source code, serving as an essential resource for both human comprehension and automated analysis. 
+Nevertheless, since comments are in natural language, they present challenges for machine-based code understanding. 
+To address this, recent studies have applied natural language processing (NLP) and deep learning techniques to classify comments according to developers’ intentions. 
+However, existing datasets for this task suffer from size limitations and class imbalance, as they rely on manual annotations and may not accurately represent the distribution of comments in real-world codebases.
+To overcome this issue, we introduce new synthetic oversampling and augmentation techniques based on high-quality data generation to enhance the [NLBSE’26 challenge datasets](https://nlbse2026.github.io/tools/). 
+Our Synthetic Quality Oversampling Technique and Augmentation Technique (**Q-SYNTH**) yield promising results, improving the base classifier by $2.56\%$. 
+
+### Resources & Links
+- [NLBSE tool competition 2026](https://nlbse2026.github.io/tools/) 
+
+- [Colab – Competition Score Testing](https://colab.research.google.com/drive/18Wif1FCWT0Sl4_9ljfmm5pOF2n1b55Mi?usp=sharing)
+
+
+### Architecture
+
+The figure below illustrates the system architecture, detailing the core components, control flow (solid arrows), and data flow relationships (dashed arrows).
+
+
+```mermaid
+flowchart LR
+    %% Data source
+    Data[Data: NLBSE2026]:::compext
+
+    %% Pipeline
+    subgraph Pipeline [Synthetic Generation Pipeline]
+        Generator[Generator<br/> ModernBERT]:::comp
+        Augment[Sentence Similarity<br/>SetFit]:::comp
+        Balancer[Data Selection <br/> Strategy]:::comp
+    end
+
+    %% Classifier
+    Classifier[Sentence Classification <br/> SetFit]:::compext
+
+    %% Data flow
+    Data --> Generator
+    Data -.-> Augment
+    Generator --> Augment
+    Augment --> Balancer
+    Balancer --> Classifier
+    Data -.-> Classifier
+
+    %% Styles
+    classDef scope fill:#fff,stroke:#333,stroke-width:1px,stroke-dasharray:5 5,color:#444,font-size:10pt;
+    classDef comp fill:#fafafa,stroke:#333,stroke-width:1.5px,font-size:10pt;
+    classDef compsub fill:#eee,stroke:#333,stroke-width:1.5px,font-size:10pt;
+    classDef compext fill:#fff,stroke:#333,stroke-width:1.5px,font-size:10pt;
+    classDef none fill:#fff,stroke:#fff,stroke-width:0px,font-size:0pt;
+
+    %% Assign class to subgraph
+    class Pipeline scope
+```
+
+## Installation
+
+The tool is implemented in Python and can be installed using standard package management tools.  
+All experiments reported in the NLBSE 2026 tool competition were conducted using the provided dependency configuration.
+
+
+Clone the repository and install the required dependencies:
+
+#### Pip
+
+```bash
+cd NLBSE26
+
+# [OPTIONAL] create conda environment
+python -m venv venv
+source venv/bin/activate  
+
+# install requirements
+pip install -U pip
+pip install -r requirements.txt  
+```
+
+## How to Run
+
+### Run the Synthetic Oversampling Pipeline (Default Configuration)
+
+To execute the pipeline using the default configuration presented in the results section (MTL model head with the Data Augmentation pipeline):
+
+```python
+python src/main.py
+```
+
+### Run the Pipeline with a Custom Experiment Configuration
+
+To run the pipeline with a specific experiment configuration from the  
+[`configs/experiment/`](configs/experiment/) directory:
+
+```python
+python src/main.py experiment=experiment_name.yaml
+```
+
+Currently, two main configurations are provided:
+
+- **`setfitlinear.yaml`** — trains the baseline model with various data augmentation strategies.
+- **`setfitmtl.yaml`** — trains the Multi-Task Learning (MTL) model architecture.
+
+### Example: Configuring Hyperparameters
+
+Below is an example of how to define your hyperparameter set using the `setfitlinear.yaml` configuration:
+
+
+```yaml
+_target_: src.pipeline.pipeline           # Entry point for running the experiment
+
+defaults:
+  - /component/augment: SyntheticData     # Synthetic data generation
+  - /component/finetune: ModernBERT       # Generator finetuning
+  - /component/classifier: SetFitLinear   # Main classifier
+  - /component/evaluation: SetFitLinear   # Evaluation configuration
+  - /component/balancer: BalancerRatio    # Balancer type
+
+trainer:                                  # Dataset configuration
+  SYNQ: 0.99                              # set the QSYNT hyperparameter
+  ValidationSize: 0.2
+
+component:                                # Easy access to component-level hyperparameters
+  augment:
+    augments: 10
+    ntop: 20
+
+  finetune:
+    batch_size: 64
+    learning_rate: 2e-5
+    weight_decay: 0.01
+    mlm_probability: 0.15
+
+  classifier:
+    batch_size: 32
+    num_iterations: 20
+```
+
+### Override any parameter from the command line
+
+All configuration parameters can be overridden directly via CLI:
+
+```bash
+python src/main.py trainer.SYNQ=0.5  component.balancer=BalancerRatio
+```
+
+## Project Structure
+
+The directory structure of the project:
+
+```
+├── .github                   <- Github Actions workflows
+│
+├── configs                   <- Hydra configs
+│   ├── component                <- Callbacks configs
+|   |   ├── augment                 <- Data Generation configs
+|   |   ├── balancer                <- Balancing strategy configs
+|   |   ├── classifier              <- Final classifier configs
+|   |   ├── finetue                 <- Generative model configs
+│   ├── experiment               <- Experiment configs
+│   ├── extras                   <- Extra utilities configs
+│   ├── hydra                    <- Hydra configs
+│   ├── logger                   <- Logger configs
+│   ├── paths                    <- Project paths configs
+│   │
+│   └── train.yaml            <- Main config for training
+│
+├── data                   <- Data generate from Generation Component
+|
+├── results                <- Results of the fine code comment classification
+|
+├── logs                   <- Logs generated by hydra loggers
+│
+├── notebooks              <- Jupyter notebooks. 
+│
+├── scripts                <- Shell scripts to run the experiment
+│
+├── src                    <- Source code
+│   ├── balancer                 <- Balancer scripts
+│   ├── models                   <- Model scripts
+│   ├── utils                    <- Utility scripts
+│   │
+│   └── main.py                 <- Run Synthetic data augmentation Pipeline
+│
+├── tests                  <- Tests of any kind
+│
+├── .env.example              <- Example of file for storing private environment variables
+├── .gitignore                <- List of files ignored by git
+├── .project-root             <- File for inferring the position of project root directory
+├── Makefile                  <- Makefile with commands like `make main` 
+├── requirements.txt          <- File for installing python dependencies
+└── README.md
+```
+
+---
+---
+
+## Extra Visualisation of the Results
+
+Proportion of positive synthetic observations included in the dataset at different levels of QSYNT:
+
+<div align="center">
+<img src="img/dataPositive2.svg" />
+</div>
+
+Comparison of the STACC baseline model performance (red lines) with versions of the STACC model enhanced using two alternative strategies: Augmentation and Oversampling.
+The evaluation spans multiple QSYNT values to examine how varying quality of synthetic data influence model behavior.
+For each language and class, we report changes in precision, recall, and F1-score relative to the original STACC baseline with out synthetic data.
+These plots reveal whether each enhancement strategy leads to performance gains or declines in each objective class.
+
+<div align="center">
+<img src="img/variationINf1_full.svg" />
+</div>

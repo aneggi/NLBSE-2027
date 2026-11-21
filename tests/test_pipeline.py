@@ -135,6 +135,28 @@ class SubmissionTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Unknown HPC_MODEL", result.stderr)
 
+    def test_codebert_profile_exports_matching_inputs_and_gpu_request(self):
+        prepared = self.path / "prepared/codebert-baseline-512"
+        prepared.mkdir()
+        (prepared / "manifest.json").write_text("{}")
+        binary = self.path / "codebert-bin"
+        binary.mkdir()
+        mock = binary / "sbatch"
+        mock.write_text('#!/bin/bash\nprintf "%s\\n" "$HPC_MODEL" "$HPC_TRAIN_CONFIG" "$HPC_PREPARED" "$@"\n')
+        mock.chmod(0o755)
+        self.env.update(HPC_MODEL="codebert-baseline", HPC_GRES="gpu:v100:1",
+                        HPC_NODELIST="verified-v100-node", DRY_RUN="0",
+                        PATH=f"{binary}:{self.env['PATH']}")
+        result = self.submit("train", "codebert-001")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[:3], ["codebert-baseline", str(ROOT / "configs/codebert-baseline.json"),
+                                    str(prepared)])
+        for option in ("--job-name=codebert-baseline-train", "--gres=gpu:v100:1",
+                       "--nodelist=verified-v100-node", f"--output={self.path}/logs/codebert-%j.out",
+                       f"--error={self.path}/logs/codebert-%j.err"):
+            self.assertIn(option, lines)
+
     def test_only_partition_and_storage_override_are_needed(self):
         self.config.write_text(f"HPC_WORKDIR={shlex.quote(str(self.path))}\nHPC_PARTITION=verified-test-partition\n")
         result = self.submit("train", "minimal-config")

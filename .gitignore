@@ -7,3 +7,5 @@ runs/
 logs/
 .cache/
 *.egg-info/
+paper/
+

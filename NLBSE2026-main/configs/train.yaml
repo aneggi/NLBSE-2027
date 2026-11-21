@@ -1,0 +1,18 @@
+# @package _global_
+
+defaults:
+  - _self_
+  - experiment: setfitmtl
+  - optimization: samgs
+  - hydra: default
+  - paths: default
+  - extras: default
+    #- override hydra/launcher: submitit_slurm
+
+
+seed: 42
+
+
+trainerHardwer:
+  use_cuda: True
+

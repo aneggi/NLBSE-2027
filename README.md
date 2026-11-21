@@ -72,6 +72,9 @@ After training, export `final_model/` and `run.json` and open
 fine-tuned classifier, runs an example, and evaluates the frozen public test
 split. The [HPC guide](hpc-unibz.md) contains the export and transfer commands.
 The notebook is prepared for later use; training must produce the artifact first.
+Its installation cell uses Colab-compatible evaluation dependencies and preserves
+the installed `gcsfs` filesystem requirement. Restart the Colab session after
+packages change. The HPC requirements remain unchanged.
 
 ModernBERT uses native PyTorch SDPA attention with reference compilation disabled,
 so no separate Flash Attention installation or compiler is required. Exported
@@ -106,7 +109,28 @@ If resuming the 17M run after an interruption, include both selections:
 HPC_MODEL=ettin-17m RESUME=auto ./submit.sh train ettin-17m-001
 ```
 
-The same Colab notebook can evaluate either model. Export the 17M run using the
+To fine-tune the original CodeBERT backbone with the same three-epoch, FP32
+settings, select its existing configuration. From `hpc/`:
+
+```bash
+HPC_MODEL=codebert-baseline ./prepare.sh
+HPC_MODEL=codebert-baseline HPC_GRES=gpu:v100:1 ./submit.sh smoke codebert-smoke-001
+# After the smoke job succeeds, using the GPU type of your completed Ettin run:
+HPC_MODEL=codebert-baseline HPC_GRES=gpu:v100:1 ./submit.sh train codebert-001
+```
+
+Use `gpu:v100:1` only if the earlier run used a V100; check its `run.json` and
+Slurm allocation. This creates separate `prepared/codebert-baseline-512` inputs,
+`runs/codebert-001` output, and `logs/codebert-JOBID.{out,err}` logs. Existing
+explicit `HPC_PREPARED`/`HPC_TRAIN_CONFIG` settings override model profiles;
+remove stale overrides before switching. No environment reinstall is needed.
+This is a controlled CodeBERT fine-tuning comparison with our training settings,
+not an exact reconstruction of the organizers' trained checkpoint.
+
+For past jobs and training-only durations, see
+[recovering HPC timings](hpc-unibz.md#12-recover-completed-job-times-and-benchmark-codebert).
+
+The same Colab notebook can evaluate either Ettin model. Export the 17M run using the
 guide's commands with `ettin-17m-001`, then change `ARCHIVE`, `WORK_DIR`, and
 `RESULT_DIR` in Colab to the 17M paths. It reads the model type and preprocessing
 from the export rather than assuming a particular Ettin size.

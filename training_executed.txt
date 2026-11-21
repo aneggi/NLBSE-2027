@@ -1,0 +1,34 @@
+
+aaneggi@hpclgn02:~$ sacct -u aaneggi -S now-90days -X \
+  --format=JobID,JobName%28,State,Elapsed,NodeList%16,AllocTRES%90
+JobID                        User       Partition         Account         Elapsed      State  AllocCPUS                                                                                  AllocTRES JobID                             JobName      State         Elapsed         NodeList                                                                                  AllocTRES 
+------------ -------------------- --------------- --------------- --------------- ---------- ---------- ------------------------------------------------------------------------------------------ ------------ ---------------------------- ---------- --------------- ---------------- ------------------------------------------------------------------------------------------ 
+276309                    aaneggi             cpu         greenml        00:00:11  COMPLETED          1                                                  billing=1,cpu=1,energy=4695,mem=2G,node=1 276309                             sbatch  COMPLETED        00:00:11         hpcamd01                                                  billing=1,cpu=1,energy=4695,mem=2G,node=1 
+276325                    aaneggi         gpu-pre         greenml        00:00:02     FAILED          4           billing=4,cpu=4,energy=10771,gres/gpu:a100-sxm4-80gb=1,gres/gpu=1,mem=32G,node=1 276325                        nlbse-smoke     FAILED        00:00:02         hpcsgn04           billing=4,cpu=4,energy=10771,gres/gpu:a100-sxm4-80gb=1,gres/gpu=1,mem=32G,node=1 
+276348                    aaneggi         gpu-pre         greenml        00:01:46  COMPLETED          4          billing=4,cpu=4,energy=175956,gres/gpu:a100-sxm4-80gb=1,gres/gpu=1,mem=32G,node=1 276348                        nlbse-smoke  COMPLETED        00:01:46         hpcsgn05          billing=4,cpu=4,energy=175956,gres/gpu:a100-sxm4-80gb=1,gres/gpu=1,mem=32G,node=1 
+276359                    aaneggi         gpu-pre         greenml        00:01:27  COMPLETED          4                     billing=4,cpu=4,energy=21552,gres/gpu:v100=1,gres/gpu=1,mem=16G,node=1 276359                        nlbse-smoke  COMPLETED        00:01:27         hpcsgn07                     billing=4,cpu=4,energy=21552,gres/gpu:v100=1,gres/gpu=1,mem=16G,node=1 
+276360                    aaneggi         gpu-pre         greenml        00:00:16  COMPLETED          4                      billing=4,cpu=4,energy=5552,gres/gpu:v100=1,gres/gpu=1,mem=16G,node=1 276360                        nlbse-smoke  COMPLETED        00:00:16         hpcsgn07                      billing=4,cpu=4,energy=5552,gres/gpu:v100=1,gres/gpu=1,mem=16G,node=1 
+276362                    aaneggi         gpu-pre         greenml        00:00:17     FAILED          4                      billing=4,cpu=4,energy=7574,gres/gpu:v100=1,gres/gpu=1,mem=16G,node=1 276362                        nlbse-train     FAILED        00:00:17         hpcsgn07                      billing=4,cpu=4,energy=7574,gres/gpu:v100=1,gres/gpu=1,mem=16G,node=1 
+276363                    aaneggi         gpu-pre         greenml        01:35:33  COMPLETED          4                   billing=4,cpu=4,energy=2484787,gres/gpu:v100=1,gres/gpu=1,mem=16G,node=1 276363                        nlbse-train  COMPLETED        01:35:33         hpcsgn07                   billing=4,cpu=4,energy=2484787,gres/gpu:v100=1,gres/gpu=1,mem=16G,node=1 
+276467                    aaneggi         gpu-pre         greenml        00:01:08  COMPLETED          4          billing=4,cpu=4,energy=115940,gres/gpu:a100-sxm4-80gb=1,gres/gpu=1,mem=16G,node=1 276467                    ettin-17m-smoke  COMPLETED        00:01:08         hpcsgn05          billing=4,cpu=4,energy=115940,gres/gpu:a100-sxm4-80gb=1,gres/gpu=1,mem=16G,node=1 
+276468                    aaneggi         gpu-pre         greenml        00:32:13  COMPLETED          4         billing=4,cpu=4,energy=2666620,gres/gpu:a100-sxm4-80gb=1,gres/gpu=1,mem=16G,node=1 276468                    ettin-17m-train  COMPLETED        00:32:13         hpcsgn05         billing=4,cpu=4,energy=2666620,gres/gpu:a100-sxm4-80gb=1,gres/gpu=1,mem=16G,node=1 
+aaneggi@hpclgn02:~$ 
+
+
+aaneggi@hpclgn02:~$ cat ~/nlbse27/runs/ettin-17m-001/train_results.json
+{
+    "epoch": 3.0,
+    "total_flos": 7850255904165888.0,
+    "train_loss": 0.17469946880360915,
+    "train_runtime": 1845.1828,
+    "train_samples_per_second": 348.886,
+    "train_steps_per_second": 21.806
+}aaneggi@hpclgn02:~$cat ~/nlbse27/runs/ettin-32m-001/train_results.jsonn
+{
+    "epoch": 3.0,
+    "total_flos": 2.5096914158505984e+16,
+    "train_loss": 0.16110960775931688,
+    "train_runtime": 5623.4237,
+    "train_samples_per_second": 114.478,
+    "train_steps_per_second": 7.155
+}aaneggi@hpclgn02:~$ 
