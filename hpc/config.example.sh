@@ -13,6 +13,7 @@ HPC_ACCOUNT=greenml
 # Everything else has defaults: Python 3.11/3.12 is detected automatically;
 # model: Ettin encoder 32M, with a separate prepared/ettin-32m-512 data cache;
 # select 17M per command with HPC_MODEL=ettin-17m (see README.md);
+# select the Crivo decision encoder with HPC_MODEL=crivo-17m;
 # select the original backbone with HPC_MODEL=codebert-baseline;
 # files go in $HOME/nlbse27; jobs request 1 GPU, 4 CPUs, 16 GB RAM, and 2 hours.
 # Storage must be visible on compute nodes. Advanced options: ../hpc-unibz.md

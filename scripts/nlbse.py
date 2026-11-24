@@ -87,7 +87,17 @@ def provenance():
 
 
 def load_tokenizer(path, use_fast=False):
-    from transformers import AutoTokenizer
+    from transformers import AutoTokenizer, PreTrainedTokenizerFast
+    tokenizer_config = Path(path) / "tokenizer_config.json"
+    settings = read_json(tokenizer_config) if tokenizer_config.is_file() else {}
+    if use_fast and settings.get("tokenizer_class") == "TokenizersBackend":
+        # Transformers 5.x renamed the generic fast tokenizer and its list of
+        # extra tokens. Load the same local tokenizer graph with the 4.x API.
+        options = {}
+        extra_tokens = settings.get("extra_special_tokens")
+        if isinstance(extra_tokens, list):
+            options = dict(extra_special_tokens={}, additional_special_tokens=extra_tokens)
+        return PreTrainedTokenizerFast.from_pretrained(path, local_files_only=True, **options)
     return AutoTokenizer.from_pretrained(path, use_fast=use_fast, local_files_only=True)
 
 
@@ -105,6 +115,29 @@ def load_classifier(path, for_training=False):
         # separately installed flash-attn package required.
         config.reference_compile = False
         options["attn_implementation"] = "sdpa"
+    if for_training and hasattr(config, "decision"):
+        from safetensors.torch import load_file
+
+        if config.model_type != "modernbert":
+            raise ValueError("Only ModernBERT decision encoders are supported")
+        # Crivo was saved with Transformers 5.x. Preserve both rotary bases
+        # when loading it with our pinned 4.x API (which otherwise ignores them).
+        for layer_type, attribute in (("full_attention", "global_rope_theta"),
+                                      ("sliding_attention", "local_rope_theta")):
+            rope = config.rope_parameters[layer_type]
+            if rope.get("rope_type", "default") != "default":
+                raise ValueError("Only default rotary embeddings are supported for Crivo")
+            setattr(config, attribute, rope["rope_theta"])
+        # The upstream checkpoint wraps the backbone under encoder.* and has
+        # a per-option scorer. Transfer every backbone tensor strictly, and
+        # initialize a fresh two-label head for our independent binary tasks.
+        del config.decision
+        state = load_file(str(Path(path) / "model.safetensors"))
+        encoder_state = {key.removeprefix("encoder."): value for key, value in state.items()
+                         if key.startswith("encoder.")}
+        model = AutoModelForSequenceClassification.from_config(config, **options)
+        model.base_model.load_state_dict(encoder_state, strict=True)
+        return model
     return AutoModelForSequenceClassification.from_pretrained(
         path, config=config, local_files_only=True, **options,
     )

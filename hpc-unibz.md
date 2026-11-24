@@ -84,7 +84,7 @@ configuration files continue to work.
 
 | Setting | Default / purpose |
 | --- | --- |
-| `HPC_MODEL` | `ettin-32m`; select `ettin-17m` or `codebert-baseline` per command. |
+| `HPC_MODEL` | `ettin-32m`; select `ettin-17m`, `crivo-17m`, or `codebert-baseline` per command. |
 | `HPC_PYTHON` | Automatically finds `python3.11`, `python3.12`, or a compatible `python3`; set an executable to override. |
 | `HPC_VENV` | `$HPC_WORKDIR/venv` |
 | `HPC_PREPARED` | `$HPC_WORKDIR/prepared/$HPC_MODEL-512`; follows the selected model. |
@@ -570,6 +570,26 @@ do not sum `.batch`/`.extern` rows or label the sum as pure training time.
 Without historical stage timers, exact cumulative training-only time may not
 be recoverable. Preserve the files before rerunning anything.
 
+For A100 runs, the helper below matches retained `.out` headers to run names,
+queries parent-job accounting once, and sums training-job allocations including
+timeouts. It prints the final Trainer invocation separately and excludes
+evaluation-only submissions. Run from the repository root:
+
+```bash
+python3 scripts/training_times.py
+```
+
+If a particular attempt's output log was deleted, include its verified job ID:
+
+```bash
+python3 scripts/training_times.py --extra-job codebert-a100-002=277034
+```
+
+Use that example only if job 277034 belongs to that run. Totals cover retained
+logs and explicit extra IDs, not unknown/deleted attempts. Missing accounting
+or still-active attempts are marked incomplete. All three models' allocation
+totals share the same timing scope; they are not pure training-loop durations.
+
 For existing HPC evaluations, `runs/RUN/evaluation-JOBID/metrics.json` contains
 `wall_seconds` for the evaluation loop and `forward_seconds_per_pass` for the
 average forward-only pass. Neither is the training duration. These HPC results
@@ -635,3 +655,69 @@ HPC_MODEL=codebert-baseline HPC_GRES=gpu:v100:1 RESUME=auto \
 Use `RESUME=auto` only for a run with saved checkpoints. If the final model exists
 and only evaluation failed, use the same profile with `./submit.sh evaluate
 codebert-001` instead of retraining. Preserve all job IDs for total-time reporting.
+
+## 13. Fine-tune Crivo-17M
+
+After pulling the updated repository on the HPC, run from the repository root:
+
+```bash
+HPC_MODEL=crivo-17m bash hpc/prepare.sh
+HPC_MODEL=crivo-17m DRY_RUN=1 bash hpc/submit.sh smoke crivo-17m-smoke-001
+HPC_MODEL=crivo-17m bash hpc/submit.sh smoke crivo-17m-smoke-001
+# After the smoke job succeeds:
+HPC_MODEL=crivo-17m bash hpc/submit.sh train crivo-17m-001
+```
+
+From inside `hpc/`, use `./prepare.sh` and `./submit.sh` with the same prefixes.
+An existing environment needs no reinstall. Remove explicit `HPC_TRAIN_CONFIG`
+or `HPC_PREPARED` overrides before selecting the new profile.
+
+`configs/crivo-17m.json` pins
+[`tardellirs/crivo-17m`](https://huggingface.co/tardellirs/crivo-17m/tree/8e42a0dbc309ca3360bfa94ebfd30061d6994ba7)
+at revision `8e42a0dbc309ca3360bfa94ebfd30061d6994ba7`. It keeps the Ettin-17M
+training settings: three epochs, 512 tokens, FP32, learning rate 2e-5, batch 8
+and accumulation 2. New inputs go to `~/nlbse27/prepared/crivo-17m-512`, output
+to `~/nlbse27/runs/crivo-17m-001`, and logs to `~/nlbse27/logs/crivo-JOBID.{out,err}`.
+The default profile remains Ettin-32M. Preparation must run once for Crivo even
+if Ettin inputs already exist; the checkpoint and tokenizer belong to this profile.
+
+The [upstream model source](https://huggingface.co/tardellirs/crivo-17m/blob/8e42a0dbc309ca3360bfa94ebfd30061d6994ba7/model.py)
+saves a ModernBERT encoder under `encoder.*` plus a custom per-option decision
+head. Our loader transfers every encoder tensor with strict key and shape
+checks, preserves both rotary-position bases from its newer configuration, and
+initializes a fresh standard two-output classifier. The entire encoder is
+fine-tuned on `Function` for independent `[Vulnerability, MAT]` labels with the
+existing multi-label loss. This experiment uses Crivo's trained encoder weights;
+it does not use its typed-question format or original decision scorer. No
+upstream Python code is executed, and the HPC dependencies stay unchanged.
+
+If training stops after saving a checkpoint, resume the same run:
+
+```bash
+HPC_MODEL=crivo-17m RESUME=auto bash hpc/submit.sh train crivo-17m-001
+```
+
+If `final_model/` already exists and only evaluation failed:
+
+```bash
+HPC_MODEL=crivo-17m bash hpc/submit.sh evaluate crivo-17m-001
+```
+
+Export `final_model/` and `run.json` as in section 10, substituting
+`crivo-17m-001` for the run and archive name. The exported model uses the standard
+ModernBERT sequence-classification format, so the existing Colab evaluation
+notebook supports it after changing `ARCHIVE`, `WORK_DIR`, and `RESULT_DIR`.
+The upstream model is licensed CC BY-NC 4.0; retain its attribution and license
+when sharing adapted weights.
+
+Local offline integration checks (with `requirements.txt` installed):
+
+```bash
+python tests/smoke_pipeline.py --architecture crivo
+# Optional: exercise a previously downloaded pinned checkpoint:
+python tests/smoke_pipeline.py --architecture crivo --backbone /absolute/path/to/crivo-17m
+```
+
+The checks verify exact encoder transfer, rejection of missing encoder tensors,
+training, deterministic checkpoint resume, evaluation, prediction, and export
+loading through the Colab notebook on a small fixture dataset.

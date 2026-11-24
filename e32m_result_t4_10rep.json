@@ -1,0 +1,109 @@
+{
+  "Vulnerability": {
+    "accuracy": 0.967150546403523,
+    "precision": 0.9642747151216507,
+    "recall": 0.9344409072821329,
+    "f1": 0.9491234274743596,
+    "tp": 9393,
+    "fp": 348,
+    "tn": 20255,
+    "fn": 659
+  },
+  "MAT": {
+    "accuracy": 0.9974229326374164,
+    "precision": 0.9907834101382489,
+    "recall": 0.8514851485148515,
+    "f1": 0.9158679446219382,
+    "tp": 430,
+    "fp": 4,
+    "tn": 30146,
+    "fn": 75
+  },
+  "mean_f1": 0.9324956860481489,
+  "instances": 30655,
+  "full_public_test": true,
+  "forward_seconds_per_pass": 47.24319944099995,
+  "gflops_per_pass": 188344.19244413,
+  "wall_seconds": 889.3224530800001,
+  "repetitions": 10,
+  "profiling_enabled": true,
+  "eval_batch_size": 256,
+  "precision": "fp16",
+  "threshold": 0.5,
+  "label_order": [
+    "Vulnerability",
+    "MAT"
+  ],
+  "training_run": {
+    "config": {
+      "model_name": "jhu-clsp/ettin-encoder-32m",
+      "model_revision": "1b8ba06455dd44f80fc9c1ca9e22806157a57379",
+      "dataset_name": "NLBSE/nlbse27-code-comment-classification",
+      "dataset_revision": "main",
+      "use_fast_tokenizer": true,
+      "max_length": 512,
+      "seed": 42,
+      "epochs": 3,
+      "learning_rate": 2e-05,
+      "weight_decay": 0.01,
+      "warmup_ratio": 0.1,
+      "batch_size": 8,
+      "gradient_accumulation_steps": 2,
+      "eval_batch_size": 16,
+      "precision": "fp32",
+      "save_steps": 500,
+      "save_total_limit": 2
+    },
+    "prepared": {
+      "model_name": "jhu-clsp/ettin-encoder-32m",
+      "model_revision": "1b8ba06455dd44f80fc9c1ca9e22806157a57379",
+      "dataset_name": "NLBSE/nlbse27-code-comment-classification",
+      "dataset_revision": "feca19b90d1cc9fcf8ba5d6e693c4a94e249585c",
+      "max_length": 512,
+      "labels": [
+        "Vulnerability",
+        "MAT"
+      ],
+      "use_fast_tokenizer": true,
+      "split_sizes": {
+        "train": 214586,
+        "test": 30655
+      },
+      "environment": {
+        "python": "3.12.3",
+        "packages": {
+          "torch": "2.6.0+cu124",
+          "transformers": "4.51.3",
+          "datasets": "3.5.0",
+          "accelerate": "1.6.0",
+          "numpy": "2.2.5"
+        },
+        "git_commit": "9090133bf853c3f7d15da24d365e71eb5ebec0a4",
+        "git_status": ""
+      }
+    },
+    "environment": {
+      "python": "3.12.3",
+      "packages": {
+        "torch": "2.6.0+cu124",
+        "transformers": "4.51.3",
+        "datasets": "3.5.0",
+        "accelerate": "1.6.0",
+        "numpy": "2.2.5"
+      },
+      "git_commit": "d874fcc817563d6b317ac68cf32480fde54e0530",
+      "git_status": ""
+    },
+    "max_steps": -1,
+    "max_train_samples": null,
+    "train_instances": 214586,
+    "parameters": 32031746,
+    "device": "Tesla V100S-PCIE-32GB"
+  },
+  "parameters": 32031746,
+  "device": "Tesla T4",
+  "torch_version": "2.14.1+cu130",
+  "transformers_version": "5.23.0",
+  "datasets_version": "5.2.0",
+  "competition_score_local": 0.9375
+}

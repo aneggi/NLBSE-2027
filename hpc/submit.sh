@@ -57,6 +57,7 @@ if [[ "$mode" == smoke ]]; then time_limit="$HPC_SMOKE_TIME"; fi
 mkdir -p "$HPC_WORKDIR/logs"
 log_prefix=ettin
 if [[ "$HPC_MODEL" == codebert-baseline ]]; then log_prefix=codebert; fi
+if [[ "$HPC_MODEL" == crivo-17m ]]; then log_prefix=crivo; fi
 options=(--job-name="$HPC_MODEL-$mode" --nodes=1 --ntasks=1
     --partition="$HPC_PARTITION" --gres="$HPC_GRES"
     --cpus-per-task="$HPC_CPUS" --mem="$HPC_MEM" --time="$time_limit"

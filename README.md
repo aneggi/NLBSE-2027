@@ -135,6 +135,31 @@ guide's commands with `ettin-17m-001`, then change `ARCHIVE`, `WORK_DIR`, and
 `RESULT_DIR` in Colab to the 17M paths. It reads the model type and preprocessing
 from the export rather than assuming a particular Ettin size.
 
+To fine-tune [`tardellirs/crivo-17m`](https://huggingface.co/tardellirs/crivo-17m),
+select the new profile. From the repository root after syncing to the HPC:
+
+```bash
+HPC_MODEL=crivo-17m bash hpc/prepare.sh
+HPC_MODEL=crivo-17m bash hpc/submit.sh smoke crivo-17m-smoke-001
+# After the smoke job succeeds:
+HPC_MODEL=crivo-17m bash hpc/submit.sh train crivo-17m-001
+# If interrupted after a checkpoint was saved:
+HPC_MODEL=crivo-17m RESUME=auto bash hpc/submit.sh train crivo-17m-001
+```
+
+This uses the pinned checkpoint in `configs/crivo-17m.json`, separate inputs in
+`~/nlbse27/prepared/crivo-17m-512`, output in `~/nlbse27/runs/crivo-17m-001`,
+and `logs/crivo-JOBID.{out,err}`. Dependencies and training hyperparameters are
+the same as Ettin-17M; an existing HPC environment needs no reinstall.
+Remove any explicit `HPC_PREPARED`/`HPC_TRAIN_CONFIG` overrides before switching.
+
+Crivo ships a custom per-option decision scorer. We transfer its entire trained
+ModernBERT encoder, preserve its rotary-position settings, and train a fresh
+two-output `[Vulnerability, MAT]` classifier on `Function` with the existing
+multi-label loss. The exported classifier uses standard Transformers classes
+and the same Colab evaluation notebook. See the
+[Crivo HPC instructions](hpc-unibz.md#13-fine-tune-crivo-17m) for details.
+
 Run checks:
 
 ```bash
@@ -142,6 +167,7 @@ python3 -m unittest discover -s tests -v
 # With requirements.txt installed:
 python tests/smoke_pipeline.py                         # tiny ModernBERT, offline
 python tests/smoke_pipeline.py --architecture roberta  # original backbone compatibility
+python tests/smoke_pipeline.py --architecture crivo    # custom decision encoder transfer
 ```
 
 The integration checks cover preparation, training, deterministic resume,

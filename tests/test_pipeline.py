@@ -30,6 +30,14 @@ class MetricTests(unittest.TestCase):
         for key in larger.keys() - {"model_name", "model_revision"}:
             self.assertEqual(smaller[key], larger[key], key)
 
+    def test_crivo_uses_matching_training_settings(self):
+        crivo = pipeline.load_config(ROOT / "configs/crivo-17m.json")
+        ettin = pipeline.load_config(ROOT / "configs/ettin-17m.json")
+        self.assertEqual(crivo["model_name"], "tardellirs/crivo-17m")
+        self.assertEqual(len(crivo["model_revision"]), 40)
+        for key in ettin.keys() - {"model_name", "model_revision"}:
+            self.assertEqual(crivo[key], ettin[key], key)
+
     def test_independent_tasks_and_mean_f1(self):
         labels = [[1, 0], [1, 1], [0, 0], [0, 1]]
         predictions = [[1, 1], [0, 1], [0, 0], [1, 1]]
@@ -134,6 +142,25 @@ class SubmissionTests(unittest.TestCase):
         result = self.submit("train", "bad-profile")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Unknown HPC_MODEL", result.stderr)
+
+    def test_crivo_profile_exports_isolated_inputs_runs_and_logs(self):
+        prepared = self.path / "prepared/crivo-17m-512"
+        prepared.mkdir()
+        (prepared / "manifest.json").write_text("{}")
+        binary = self.path / "crivo-bin"
+        binary.mkdir()
+        mock = binary / "sbatch"
+        mock.write_text('#!/bin/bash\nprintf "%s\\n" "$HPC_MODEL" "$HPC_TRAIN_CONFIG" "$HPC_PREPARED" "$NLBSE_RUN_DIR" "$@"\n')
+        mock.chmod(0o755)
+        self.env.update(HPC_MODEL="crivo-17m", DRY_RUN="0", PATH=f"{binary}:{self.env['PATH']}")
+        result = self.submit("train", "crivo-17m-001")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[:4], ["crivo-17m", str(ROOT / "configs/crivo-17m.json"),
+                                    str(prepared), str(self.path / "runs/crivo-17m-001")])
+        for option in ("--job-name=crivo-17m-train", f"--output={self.path}/logs/crivo-%j.out",
+                       f"--error={self.path}/logs/crivo-%j.err"):
+            self.assertIn(option, lines)
 
     def test_codebert_profile_exports_matching_inputs_and_gpu_request(self):
         prepared = self.path / "prepared/codebert-baseline-512"

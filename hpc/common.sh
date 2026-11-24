@@ -16,8 +16,8 @@ HPC_WORKDIR="${HPC_WORKDIR:-$HOME/nlbse27}"
 HPC_VENV="${HPC_VENV:-$HPC_WORKDIR/venv}"
 HPC_MODEL="${HPC_MODEL:-ettin-32m}"
 case "$HPC_MODEL" in
-    ettin-17m|ettin-32m|codebert-baseline) ;;
-    *) echo "Unknown HPC_MODEL: $HPC_MODEL. Choose ettin-17m, ettin-32m, or codebert-baseline." >&2; exit 1 ;;
+    ettin-17m|ettin-32m|crivo-17m|codebert-baseline) ;;
+    *) echo "Unknown HPC_MODEL: $HPC_MODEL. Choose ettin-17m, ettin-32m, crivo-17m, or codebert-baseline." >&2; exit 1 ;;
 esac
 HPC_PREPARED="${HPC_PREPARED:-$HPC_WORKDIR/prepared/$HPC_MODEL-512}"
 HPC_TRAIN_CONFIG="${HPC_TRAIN_CONFIG:-$REPO_ROOT/configs/$HPC_MODEL.json}"

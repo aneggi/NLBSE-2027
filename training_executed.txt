@@ -32,3 +32,43 @@ aaneggi@hpclgn02:~$ cat ~/nlbse27/runs/ettin-17m-001/train_results.json
     "train_samples_per_second": 114.478,
     "train_steps_per_second": 7.155
 }aaneggi@hpclgn02:~$ 
+
+
+In the end we have this:
+aneggi@hpclgn02:~$ python3 - <<'PY'
+import json
+from pathlib import Path
+
+root = Path.home() / "nlbse27/runs"
+for path in sorted(root.glob("*a100*/train_results.json")):
+    metrics = json.loads(path.read_text())
+    run = json.loads((path.parent / "run.json").read_text())
+    seconds = metrics["train_runtime"]
+    print(f"{path.parent.name}:")
+    print(f"  GPU: {run.get('device', 'unknown')}")
+    print(f"  Training: {seconds:.1f} seconds ({seconds / 60:.2f} minutes)")
+    print(f"  Epochs: {metrics.get('epoch')}")
+PY
+codebert-a100-002:
+  GPU: NVIDIA A100-SXM4-80GB
+  Training: 8095.0 seconds (134.92 minutes)
+  Epochs: 3.0
+ettin-17m-a100-001:
+  GPU: NVIDIA A100-SXM4-80GB
+  Training: 1669.5 seconds (27.82 minutes)
+  Epochs: 3.0
+ettin-32m-a100-001:
+  GPU: NVIDIA A100-SXM4-80GB
+  Training: 3208.8 seconds (53.48 minutes)
+  Epochs: 3.0
+aaneggi@hpclgn02:~$ 
+
+Run: codebert-a100-clean-002
+GPU: NVIDIA A100-SXM4-80GB
+Epochs: 3.0
+Training time: 216.09 minutes
+Vulnerability: precision=0.9503, recall=0.9330, F1=0.9416
+MAT: precision=0.9878, recall=0.8000, F1=0.8840
+Mean F1: 0.9128
+Full public test: True
+

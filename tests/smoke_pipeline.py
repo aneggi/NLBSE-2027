@@ -1,4 +1,4 @@
-"""Offline pipeline check with tiny ModernBERT/RoBERTa or a downloaded backbone."""
+"""Offline pipeline check with tiny ModernBERT/Crivo/RoBERTa or a downloaded backbone."""
 
 import argparse
 import importlib.util
@@ -20,16 +20,16 @@ def main():
     import torch
     from datasets import Dataset, DatasetDict
     from tokenizers import ByteLevelBPETokenizer
-    from transformers import (ModernBertConfig, ModernBertForMaskedLM,
+    from transformers import (ModernBertConfig, ModernBertForMaskedLM, ModernBertModel,
                               RobertaConfig, RobertaModel, RobertaTokenizer, RobertaTokenizerFast)
-    from safetensors.torch import load_file
+    from safetensors.torch import load_file, save_file
 
     spec = importlib.util.spec_from_file_location("nlbse", ROOT / "scripts/nlbse.py")
     pipeline = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(pipeline)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--architecture", choices=["modernbert", "roberta"], default="modernbert")
-    parser.add_argument("--backbone", type=Path, help="Optional locally downloaded Ettin checkpoint")
+    parser.add_argument("--architecture", choices=["modernbert", "crivo", "roberta"], default="modernbert")
+    parser.add_argument("--backbone", type=Path, help="Optional locally downloaded checkpoint")
     parser.add_argument("--config", type=Path, help="Optional configuration to exercise")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="nlbse-integration-") as temporary:
@@ -44,13 +44,16 @@ def main():
             bpe.train_from_iterator(["int f() { /* TODO */ return 0; }", "void g() { return; }"],
                                     vocab_size=280, special_tokens=["<s>", "<pad>", "</s>", "<unk>", "<mask>"])
             bpe.save_model(str(backbone))
-            tokenizer_class = RobertaTokenizerFast if args.architecture == "modernbert" else RobertaTokenizer
+            tokenizer_class = RobertaTokenizer if args.architecture == "roberta" else RobertaTokenizerFast
             tokenizer = tokenizer_class(vocab_file=str(backbone / "vocab.json"),
                                         merges_file=str(backbone / "merges.txt"))
+            if args.architecture == "crivo":
+                tokenizer.add_special_tokens({"additional_special_tokens": ["[OPT]"]})
             tokenizer.save_pretrained(backbone)
             torch.manual_seed(42)
-            if args.architecture == "modernbert":
-                model = ModernBertForMaskedLM(ModernBertConfig(
+            if args.architecture in ("modernbert", "crivo"):
+                model_class = ModernBertModel if args.architecture == "crivo" else ModernBertForMaskedLM
+                model = model_class(ModernBertConfig(
                     vocab_size=len(tokenizer), hidden_size=16, num_hidden_layers=2,
                     num_attention_heads=2, intermediate_size=32, max_position_embeddings=514,
                     reference_compile=False, pad_token_id=1, cls_token_id=0, bos_token_id=0,
@@ -59,9 +62,58 @@ def main():
                 model = RobertaModel(RobertaConfig(
                     vocab_size=len(tokenizer), hidden_size=16, num_hidden_layers=1,
                     num_attention_heads=2, intermediate_size=32, max_position_embeddings=514))
-            model.save_pretrained(backbone)
+            if args.architecture == "crivo":
+                # Match Crivo's custom state dictionary and Transformers 5.x
+                # config, including a non-default local rotary base.
+                state = {f"encoder.{key}": value for key, value in model.state_dict().items()}
+                state["type_embedding.weight"] = torch.zeros(3, model.config.hidden_size)
+                state["scorer.0.weight"] = torch.ones(model.config.hidden_size)
+                save_file(state, str(backbone / "model.safetensors"))
+                raw_config = model.config.to_dict()
+                raw_config.pop("global_rope_theta", None)
+                raw_config.pop("local_rope_theta", None)
+                raw_config["rope_parameters"] = {
+                    name: {"rope_theta": 160000.0, "rope_type": "default"}
+                    for name in ("full_attention", "sliding_attention")}
+                raw_config["decision"] = {"opt_token": "[OPT]"}
+                pipeline.write_json(backbone / "config.json", raw_config)
+                tokenizer_config = pipeline.read_json(backbone / "tokenizer_config.json")
+                tokenizer_config["tokenizer_class"] = "TokenizersBackend"
+                tokenizer_config.pop("additional_special_tokens", None)
+                tokenizer_config["extra_special_tokens"] = ["[OPT]"]
+                tokenizer_config["model_input_names"] = ["input_ids", "attention_mask"]
+                pipeline.write_json(backbone / "tokenizer_config.json", tokenizer_config)
+            else:
+                model.save_pretrained(backbone)
+        if args.architecture == "crivo":
+            transferred = pipeline.load_classifier(backbone, for_training=True)
+            original = load_file(str(backbone / "model.safetensors"))
+            for key, value in transferred.base_model.state_dict().items():
+                torch.testing.assert_close(value, original[f"encoder.{key}"], rtol=0, atol=0)
+            assert transferred.config.global_rope_theta == 160000.0
+            assert transferred.config.local_rope_theta == 160000.0
+            assert transferred.config.num_labels == 2
+            assert not hasattr(transferred.config, "decision")
+            tokenizer = pipeline.load_tokenizer(backbone, use_fast=True)
+            assert len(tokenizer) == transferred.config.vocab_size
+            assert tokenizer.convert_tokens_to_ids("[OPT]") != tokenizer.unk_token_id
+            from tokenizers import Tokenizer
+            graph = Tokenizer.from_file(str(backbone / "tokenizer.json"))
+            assert tokenizer("int f() { /* TODO */ return 0; }")["input_ids"] == \
+                graph.encode("int f() { /* TODO */ return 0; }").ids
+            # A missing encoder tensor must fail rather than leave random weights.
+            with patch("safetensors.torch.load_file", return_value={}):
+                try:
+                    pipeline.load_classifier(backbone, for_training=True)
+                except RuntimeError:
+                    pass
+                else:
+                    raise AssertionError("Incomplete Crivo encoder was accepted")
+            del transferred, original
         codes = ["int f() { /* TODO */ return 0; }", "void g() { return; }"] * 4
-        config_path_source = pipeline.DEFAULT_CONFIG if args.architecture == "modernbert" else ROOT / "configs/codebert-baseline.json"
+        config_path_source = {"modernbert": pipeline.DEFAULT_CONFIG,
+                              "crivo": ROOT / "configs/crivo-17m.json",
+                              "roberta": ROOT / "configs/codebert-baseline.json"}[args.architecture]
         config = pipeline.load_config(args.config or config_path_source)
         config.update(max_length=16, batch_size=2, eval_batch_size=2, save_steps=1,
                       model_revision="fixture", dataset_revision="fixture")
@@ -112,7 +164,7 @@ def main():
         metrics = pipeline.read_json(evaluation / "metrics.json")
         assert metrics["instances"] == 8 and metrics["full_public_test"]
         assert metrics["gflops_per_pass"] > 0 and 0 <= metrics["mean_f1"] <= 1
-        if args.architecture == "modernbert":
+        if args.architecture in ("modernbert", "crivo"):
             saved_config = pipeline.read_json(output / "final_model/config.json")
             assert saved_config["model_type"] == "modernbert"
             # Transformers deliberately omits reference_compile when serializing
